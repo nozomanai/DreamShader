@@ -6,7 +6,7 @@ DreamShader 是一个 Unreal Engine 材质生成插件。它提供 `DreamShaderL
 
 > 本插件目前基于 Unreal Engine `5.7` 版本为基础开发 其他版本未经测试
 
-> 有任何问题/Bug反馈 可以创建[Issues](https://github.com/TypeDreamMoon/DreamShader/issues/new)更快的支持 可以直接加我的[QQ群 466585194](点击链接加入群聊【UNREAL GIRLS CRY】：https://qm.qq.com/q/X9uCLjVcY)
+> 有任何问题/Bug反馈 可以创建[Issues](https://github.com/TypeDreamMoon/DreamShader/issues/new)更快的支持 可以直接加我的[QQ群 466585194](https://qm.qq.com/q/X9uCLjVcY)
 ## 核心能力
 
 - 使用文本源文件维护材质逻辑，减少手动连材质节点的重复工作。
