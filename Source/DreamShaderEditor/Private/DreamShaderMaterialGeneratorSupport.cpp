@@ -1694,6 +1694,235 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
+	static bool TryFindMatchingCallParenthesis(const FString& Source, const int32 OpenParenthesisIndex, int32& OutCloseParenthesisIndex)
+	{
+		if (!Source.IsValidIndex(OpenParenthesisIndex) || Source[OpenParenthesisIndex] != TCHAR('('))
+		{
+			return false;
+		}
+
+		bool bInString = false;
+		bool bInLineComment = false;
+		bool bInBlockComment = false;
+		int32 ParenthesisDepth = 0;
+		for (int32 Index = OpenParenthesisIndex; Index < Source.Len(); ++Index)
+		{
+			const TCHAR Char = Source[Index];
+			const TCHAR Next = Source.IsValidIndex(Index + 1) ? Source[Index + 1] : TCHAR('\0');
+
+			if (bInLineComment)
+			{
+				if (Char == TCHAR('\n'))
+				{
+					bInLineComment = false;
+				}
+				continue;
+			}
+
+			if (bInBlockComment)
+			{
+				if (Char == TCHAR('*') && Next == TCHAR('/'))
+				{
+					bInBlockComment = false;
+					++Index;
+				}
+				continue;
+			}
+
+			if (bInString)
+			{
+				if (Char == TCHAR('\\') && Source.IsValidIndex(Index + 1))
+				{
+					++Index;
+				}
+				else if (Char == TCHAR('"'))
+				{
+					bInString = false;
+				}
+				continue;
+			}
+
+			if (Char == TCHAR('"'))
+			{
+				bInString = true;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('/'))
+			{
+				bInLineComment = true;
+				++Index;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('*'))
+			{
+				bInBlockComment = true;
+				++Index;
+				continue;
+			}
+
+			if (Char == TCHAR('('))
+			{
+				++ParenthesisDepth;
+			}
+			else if (Char == TCHAR(')'))
+			{
+				--ParenthesisDepth;
+				if (ParenthesisDepth == 0)
+				{
+					OutCloseParenthesisIndex = Index;
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	static TArray<FString> SplitTopLevelCallArguments(const FString& ArgumentBlock)
+	{
+		TArray<FString> Arguments;
+		int32 SegmentStart = 0;
+		int32 ParenthesisDepth = 0;
+		int32 BraceDepth = 0;
+		int32 BracketDepth = 0;
+		bool bInString = false;
+		bool bInLineComment = false;
+		bool bInBlockComment = false;
+
+		for (int32 Index = 0; Index < ArgumentBlock.Len(); ++Index)
+		{
+			const TCHAR Char = ArgumentBlock[Index];
+			const TCHAR Next = ArgumentBlock.IsValidIndex(Index + 1) ? ArgumentBlock[Index + 1] : TCHAR('\0');
+
+			if (bInLineComment)
+			{
+				if (Char == TCHAR('\n'))
+				{
+					bInLineComment = false;
+				}
+				continue;
+			}
+
+			if (bInBlockComment)
+			{
+				if (Char == TCHAR('*') && Next == TCHAR('/'))
+				{
+					bInBlockComment = false;
+					++Index;
+				}
+				continue;
+			}
+
+			if (bInString)
+			{
+				if (Char == TCHAR('\\') && ArgumentBlock.IsValidIndex(Index + 1))
+				{
+					++Index;
+				}
+				else if (Char == TCHAR('"'))
+				{
+					bInString = false;
+				}
+				continue;
+			}
+
+			if (Char == TCHAR('"'))
+			{
+				bInString = true;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('/'))
+			{
+				bInLineComment = true;
+				++Index;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('*'))
+			{
+				bInBlockComment = true;
+				++Index;
+				continue;
+			}
+
+			switch (Char)
+			{
+			case TCHAR('('): ++ParenthesisDepth; break;
+			case TCHAR(')'): ParenthesisDepth = FMath::Max(0, ParenthesisDepth - 1); break;
+			case TCHAR('{'): ++BraceDepth; break;
+			case TCHAR('}'): BraceDepth = FMath::Max(0, BraceDepth - 1); break;
+			case TCHAR('['): ++BracketDepth; break;
+			case TCHAR(']'): BracketDepth = FMath::Max(0, BracketDepth - 1); break;
+			case TCHAR(','):
+				if (ParenthesisDepth == 0 && BraceDepth == 0 && BracketDepth == 0)
+				{
+					Arguments.Add(ArgumentBlock.Mid(SegmentStart, Index - SegmentStart).TrimStartAndEnd());
+					SegmentStart = Index + 1;
+				}
+				break;
+			default:
+				break;
+			}
+		}
+
+		const FString Tail = ArgumentBlock.Mid(SegmentStart).TrimStartAndEnd();
+		if (!Tail.IsEmpty() || !ArgumentBlock.TrimStartAndEnd().IsEmpty())
+		{
+			Arguments.Add(Tail);
+		}
+		return Arguments;
+	}
+
+	static FString BuildTextureSamplerArgumentName(const FString& TextureArgument)
+	{
+		return TextureArgument.TrimStartAndEnd() + TEXT("Sampler");
+	}
+
+	static bool TryRewriteExplicitOutFunctionCall(
+		const FTextShaderFunctionDefinition& Function,
+		const FString& GeneratedFunctionName,
+		const FString& ArgumentBlock,
+		FString& OutCall)
+	{
+		const TArray<FString> Arguments = SplitTopLevelCallArguments(ArgumentBlock);
+		const int32 ExpectedArgumentCount = Function.Inputs.Num() + Function.Results.Num();
+		if (Arguments.Num() != ExpectedArgumentCount || Function.Results.IsEmpty())
+		{
+			return false;
+		}
+
+		TArray<FString> Parameters;
+		for (int32 InputIndex = 0; InputIndex < Function.Inputs.Num(); ++InputIndex)
+		{
+			Parameters.Add(Arguments[InputIndex]);
+			if (IsTextureFunctionParameterType(Function.Inputs[InputIndex].Type))
+			{
+				Parameters.Add(BuildTextureSamplerArgumentName(Arguments[InputIndex]));
+			}
+		}
+
+		for (int32 ResultIndex = 1; ResultIndex < Function.Results.Num(); ++ResultIndex)
+		{
+			Parameters.Add(Arguments[Function.Inputs.Num() + ResultIndex]);
+		}
+
+		const FString PrimaryResultTarget = Arguments[Function.Inputs.Num()].TrimStartAndEnd();
+		if (PrimaryResultTarget.IsEmpty())
+		{
+			return false;
+		}
+
+		OutCall = FString::Printf(
+			TEXT("%s = %s(%s)"),
+			*PrimaryResultTarget,
+			*GeneratedFunctionName,
+			*FString::Join(Parameters, TEXT(", ")));
+		return true;
+	}
+
 	static void AddFunctionLookupEntries(
 		const FTextShaderFunctionDefinition& Function,
 		TMap<FString, const FTextShaderFunctionDefinition*>& OutFunctionsBySpelling,
@@ -1934,6 +2163,137 @@ namespace UE::DreamShader::Editor::Private
 		return Result;
 	}
 
+	static FString RewriteDreamShaderFunctionBodyCalls(
+		const FString& Source,
+		const TMap<FString, const FTextShaderFunctionDefinition*>& FunctionsBySpelling,
+		const TMap<FString, FString>& ReplacementBySpelling)
+	{
+		FString Result;
+		Result.Reserve(Source.Len() + 128);
+
+		bool bInString = false;
+		bool bInLineComment = false;
+		bool bInBlockComment = false;
+
+		for (int32 Index = 0; Index < Source.Len();)
+		{
+			const TCHAR Char = Source[Index];
+			const TCHAR Next = Source.IsValidIndex(Index + 1) ? Source[Index + 1] : TCHAR('\0');
+
+			if (bInLineComment)
+			{
+				Result.AppendChar(Char);
+				if (Char == TCHAR('\n'))
+				{
+					bInLineComment = false;
+				}
+				++Index;
+				continue;
+			}
+
+			if (bInBlockComment)
+			{
+				Result.AppendChar(Char);
+				if (Char == TCHAR('*') && Next == TCHAR('/'))
+				{
+					Result.AppendChar(Next);
+					bInBlockComment = false;
+					Index += 2;
+				}
+				else
+				{
+					++Index;
+				}
+				continue;
+			}
+
+			if (bInString)
+			{
+				Result.AppendChar(Char);
+				if (Char == TCHAR('\\') && Source.IsValidIndex(Index + 1))
+				{
+					Result.AppendChar(Source[Index + 1]);
+					Index += 2;
+				}
+				else
+				{
+					if (Char == TCHAR('"'))
+					{
+						bInString = false;
+					}
+					++Index;
+				}
+				continue;
+			}
+
+			if (Char == TCHAR('"'))
+			{
+				bInString = true;
+				Result.AppendChar(Char);
+				++Index;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('/'))
+			{
+				bInLineComment = true;
+				Result.AppendChar(Char);
+				Result.AppendChar(Next);
+				Index += 2;
+				continue;
+			}
+
+			if (Char == TCHAR('/') && Next == TCHAR('*'))
+			{
+				bInBlockComment = true;
+				Result.AppendChar(Char);
+				Result.AppendChar(Next);
+				Index += 2;
+				continue;
+			}
+
+			if (IsFunctionIdentifierStart(Char))
+			{
+				int32 IdentifierEnd = Index;
+				FString Identifier;
+				if (TryReadQualifiedIdentifierToken(Source, IdentifierEnd, Identifier))
+				{
+					const int32 PostIdentifier = SkipInlineWhitespace(Source, IdentifierEnd);
+					const FString* Replacement = ReplacementBySpelling.Find(Identifier);
+					if (Source.IsValidIndex(PostIdentifier) && Source[PostIdentifier] == TCHAR('(') && Replacement)
+					{
+						int32 CloseParenthesisIndex = INDEX_NONE;
+						if (const FTextShaderFunctionDefinition* const* Function = FunctionsBySpelling.Find(Identifier);
+							Function && TryFindMatchingCallParenthesis(Source, PostIdentifier, CloseParenthesisIndex))
+						{
+							const FString ArgumentBlock = Source.Mid(PostIdentifier + 1, CloseParenthesisIndex - PostIdentifier - 1);
+							FString RewrittenCall;
+							if (TryRewriteExplicitOutFunctionCall(**Function, *Replacement, ArgumentBlock, RewrittenCall))
+							{
+								Result += RewrittenCall;
+								Index = CloseParenthesisIndex + 1;
+								continue;
+							}
+						}
+
+						Result += *Replacement;
+						Index = IdentifierEnd;
+						continue;
+					}
+
+					Result += Source.Mid(Index, IdentifierEnd - Index);
+					Index = IdentifierEnd;
+					continue;
+				}
+			}
+
+			Result.AppendChar(Char);
+			++Index;
+		}
+
+		return Result;
+	}
+
 	static void AppendIndentedCode(FString& OutSource, const FString& Source, const FString& Indent)
 	{
 		int32 LineStart = 0;
@@ -1978,6 +2338,7 @@ namespace UE::DreamShader::Editor::Private
 
 	static void AppendGeneratedFunctionDefinition(
 		const FTextShaderFunctionDefinition& Function,
+		const TMap<FString, const FTextShaderFunctionDefinition*>& FunctionsBySpelling,
 		const TMap<FString, FString>& ReplacementBySpelling,
 		const FString& Indent,
 		FString& OutSource)
@@ -1998,7 +2359,7 @@ namespace UE::DreamShader::Editor::Private
 			OutSource += FString::Printf(TEXT("%s\t%s = (%s)0;\n"), *Indent, *Output.Name, *Output.Type);
 		}
 
-		const FString RewrittenFunctionHLSL = RewriteDreamShaderFunctionReferences(Function.HLSL, ReplacementBySpelling);
+		const FString RewrittenFunctionHLSL = RewriteDreamShaderFunctionBodyCalls(Function.HLSL, FunctionsBySpelling, ReplacementBySpelling);
 		AppendIndentedCode(OutSource, RewrittenFunctionHLSL, Indent + TEXT("\t"));
 
 		if (!Function.Results.IsEmpty())
@@ -2201,7 +2562,7 @@ namespace UE::DreamShader::Editor::Private
 		WrapperSource += FString::Printf(TEXT("struct %s\n{\n"), *WrapperTypeName);
 		for (const FTextShaderFunctionDefinition* Function : EmbeddedFunctions)
 		{
-			AppendGeneratedFunctionDefinition(*Function, GeneratedNamesBySpelling, TEXT("\t"), WrapperSource);
+			AppendGeneratedFunctionDefinition(*Function, FunctionsBySpelling, GeneratedNamesBySpelling, TEXT("\t"), WrapperSource);
 			WrapperSource += TEXT("\n");
 		}
 		WrapperSource += FString::Printf(TEXT("};\n%s %s;\n"), *WrapperTypeName, *WrapperVariableName);
@@ -2235,15 +2596,11 @@ namespace UE::DreamShader::Editor::Private
 
 		TSet<FString> SeenFunctionNames;
 		TSet<FString> SeenGeneratedFunctionNames;
+		TMap<FString, const FTextShaderFunctionDefinition*> FunctionsBySpelling;
 		TMap<FString, FString> GeneratedNamesBySpelling;
 		for (const FTextShaderFunctionDefinition& Function : Definition.Functions)
 		{
-			const FString GeneratedName = BuildGeneratedFunctionSymbolName(Function);
-			GeneratedNamesBySpelling.Add(Function.Name, GeneratedName);
-			if (!GeneratedName.Equals(Function.Name, ESearchCase::CaseSensitive))
-			{
-				GeneratedNamesBySpelling.Add(GeneratedName, GeneratedName);
-			}
+			AddFunctionLookupEntries(Function, FunctionsBySpelling, GeneratedNamesBySpelling);
 		}
 
 		for (const FTextShaderFunctionDefinition& Function : Definition.Functions)
@@ -2268,7 +2625,7 @@ namespace UE::DreamShader::Editor::Private
 			}
 			SeenGeneratedFunctionNames.Add(NormalizedGeneratedFunctionName);
 
-			AppendGeneratedFunctionDefinition(Function, GeneratedNamesBySpelling, FString(), OutSource);
+			AppendGeneratedFunctionDefinition(Function, FunctionsBySpelling, GeneratedNamesBySpelling, FString(), OutSource);
 			OutSource += TEXT("\n");
 		}
 
