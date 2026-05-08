@@ -902,9 +902,11 @@ namespace UE::DreamShader::Editor
 
 			if (UE::DreamShader::IsDreamShaderHeaderFile(NormalizedPath)
 				&& (SanitizedSourceText.Contains(TEXT("Shader("), ESearchCase::IgnoreCase)
-					|| SanitizedSourceText.Contains(TEXT("ShaderFunction("), ESearchCase::IgnoreCase)))
+					|| SanitizedSourceText.Contains(TEXT("ShaderFunction("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("MaterialLayer("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("MaterialLayerBlend("), ESearchCase::IgnoreCase)))
 			{
-				OutError = FString::Printf(TEXT("DreamShader header '%s' may only declare Function/Namespace blocks and imports."), *NormalizedPath);
+				OutError = FString::Printf(TEXT("DreamShader header '%s' may only declare Function/Namespace/VirtualFunction blocks and imports."), *NormalizedPath);
 				return false;
 			}
 
@@ -952,6 +954,16 @@ namespace UE::DreamShader::Editor
 					continue;
 				}
 
+				if (Output.MaskR && Output.MaskG && Output.MaskB && !Output.MaskA && DesiredOutput == FName(TEXT("RGB")))
+				{
+					OutIndex = OutputIndex;
+					return true;
+				}
+				if (Output.MaskR && Output.MaskG && Output.MaskB && Output.MaskA && DesiredOutput == FName(TEXT("RGBA")))
+				{
+					OutIndex = OutputIndex;
+					return true;
+				}
 				if (Output.MaskR && !Output.MaskG && !Output.MaskB && !Output.MaskA && DesiredOutput == FName(TEXT("R")))
 				{
 					OutIndex = OutputIndex;
@@ -975,6 +987,30 @@ namespace UE::DreamShader::Editor
 			}
 
 			return false;
+		}
+
+		int32 GetGraphComponentCountForProperty(const FTextShaderPropertyDefinition& Property)
+		{
+			if (Property.Type == ETextShaderPropertyType::Vector && !Property.bConst)
+			{
+				return 4;
+			}
+
+			return Property.Type == ETextShaderPropertyType::Texture2D ? 0 : Property.ComponentCount;
+		}
+
+		int32 GetPreferredOutputIndexForProperty(const FTextShaderPropertyDefinition& Property, const UMaterialExpression* Expression)
+		{
+			if (Property.Type == ETextShaderPropertyType::Vector && !Property.bConst)
+			{
+				int32 OutputIndex = 0;
+				if (TryResolveExpressionOutputIndexByName(Expression, TEXT("RGBA"), OutputIndex))
+				{
+					return OutputIndex;
+				}
+			}
+
+			return 0;
 		}
 
 		FString BuildOutputTargetCacheKey(const FTextShaderOutputBinding& Binding)
@@ -1091,6 +1127,69 @@ namespace UE::DreamShader::Editor
 			return true;
 		}
 
+		const TCHAR* GetMaterialFunctionBlockKindText(const ETextShaderMaterialFunctionKind Kind)
+		{
+			switch (Kind)
+			{
+			case ETextShaderMaterialFunctionKind::MaterialLayer:
+				return TEXT("MaterialLayer");
+			case ETextShaderMaterialFunctionKind::MaterialLayerBlend:
+				return TEXT("MaterialLayerBlend");
+			case ETextShaderMaterialFunctionKind::ShaderFunction:
+			default:
+				return TEXT("ShaderFunction");
+			}
+		}
+
+		EMaterialFunctionUsage GetUnrealMaterialFunctionUsage(const ETextShaderMaterialFunctionKind Kind)
+		{
+			switch (Kind)
+			{
+			case ETextShaderMaterialFunctionKind::MaterialLayer:
+				return EMaterialFunctionUsage::MaterialLayer;
+			case ETextShaderMaterialFunctionKind::MaterialLayerBlend:
+				return EMaterialFunctionUsage::MaterialLayerBlend;
+			case ETextShaderMaterialFunctionKind::ShaderFunction:
+			default:
+				return EMaterialFunctionUsage::Default;
+			}
+		}
+
+		bool ValidateMaterialLayerFunctionDefinition(const FTextShaderMaterialFunctionDefinition& FunctionDefinition, FString& OutError)
+		{
+			const TCHAR* BlockKind = GetMaterialFunctionBlockKindText(FunctionDefinition.Kind);
+			if (FunctionDefinition.Kind == ETextShaderMaterialFunctionKind::ShaderFunction)
+			{
+				return true;
+			}
+
+			if (FunctionDefinition.Outputs.Num() != 1 || !Private::IsMaterialAttributesType(FunctionDefinition.Outputs[0].Type))
+			{
+				OutError = FString::Printf(TEXT("%s '%s' must declare exactly one MaterialAttributes output."), BlockKind, *FunctionDefinition.Name);
+				return false;
+			}
+
+			if (FunctionDefinition.Kind == ETextShaderMaterialFunctionKind::MaterialLayerBlend)
+			{
+				int32 MaterialAttributesInputCount = 0;
+				for (const FTextShaderFunctionParameter& InputDefinition : FunctionDefinition.Inputs)
+				{
+					if (Private::IsMaterialAttributesType(InputDefinition.Type))
+					{
+						++MaterialAttributesInputCount;
+					}
+				}
+
+				if (MaterialAttributesInputCount < 2)
+				{
+					OutError = FString::Printf(TEXT("MaterialLayerBlend '%s' must declare at least two MaterialAttributes inputs."), *FunctionDefinition.Name);
+					return false;
+				}
+			}
+
+			return true;
+		}
+
 		bool GenerateMaterialFunctionAsset(
 			const FString& SourceFilePath,
 			const FString& SourceHash,
@@ -1099,15 +1198,21 @@ namespace UE::DreamShader::Editor
 			FString& OutGeneratedAssetPath,
 			FString& OutError)
 		{
+			const TCHAR* BlockKind = GetMaterialFunctionBlockKindText(FunctionDefinition.Kind);
 			if (FunctionDefinition.Outputs.IsEmpty())
 			{
-				OutError = FString::Printf(TEXT("ShaderFunction '%s' must declare at least one output."), *FunctionDefinition.Name);
+				OutError = FString::Printf(TEXT("%s '%s' must declare at least one output."), BlockKind, *FunctionDefinition.Name);
+				return false;
+			}
+
+			if (!ValidateMaterialLayerFunctionDefinition(FunctionDefinition, OutError))
+			{
 				return false;
 			}
 
 			if (FunctionDefinition.Code.IsEmpty())
 			{
-				OutError = FString::Printf(TEXT("ShaderFunction '%s' must provide a Graph block."), *FunctionDefinition.Name);
+				OutError = FString::Printf(TEXT("%s '%s' must provide a Graph block."), BlockKind, *FunctionDefinition.Name);
 				return false;
 			}
 
@@ -1117,13 +1222,16 @@ namespace UE::DreamShader::Editor
 				return false;
 			}
 
-			if (Private::IsGeneratedAssetSourceCurrent(MaterialFunction, SourceFilePath, SourceHash))
+			const EMaterialFunctionUsage ExpectedUsage = GetUnrealMaterialFunctionUsage(FunctionDefinition.Kind);
+			if (Private::IsGeneratedAssetSourceCurrent(MaterialFunction, SourceFilePath, SourceHash)
+				&& MaterialFunction->GetMaterialFunctionUsage() == ExpectedUsage)
 			{
 				OutGeneratedAssetPath = MaterialFunction->GetPathName();
 				return true;
 			}
 
 			MaterialFunction->Modify();
+			MaterialFunction->SetMaterialFunctionUsage(ExpectedUsage);
 			Private::ClearMaterialFunctionExpressions(MaterialFunction);
 
 			if (const FString* Description = FunctionDefinition.Settings.Find(UE::DreamShader::NormalizeSettingKey(TEXT("Description"))))
@@ -1219,7 +1327,8 @@ namespace UE::DreamShader::Editor
 				GeneratedPropertyExpressions.Add(Property.Name, PropertyExpression);
 				Private::FCodeValue PropertyValue;
 				PropertyValue.Expression = PropertyExpression;
-				PropertyValue.ComponentCount = Property.Type == ETextShaderPropertyType::Texture2D ? 0 : Property.ComponentCount;
+				PropertyValue.OutputIndex = GetPreferredOutputIndexForProperty(Property, PropertyExpression);
+				PropertyValue.ComponentCount = GetGraphComponentCountForProperty(Property);
 				PropertyValue.bIsTextureObject = Property.Type == ETextShaderPropertyType::Texture2D;
 				PropertyValue.bIsMaterialAttributes = false;
 				GeneratedValues.Add(Property.Name, PropertyValue);
@@ -1561,7 +1670,11 @@ namespace UE::DreamShader::Editor
 				return false;
 			}
 
-			GeneratedAssetMessages.Add(FString::Printf(TEXT("Generated %s from %s."), *GeneratedAssetPath, *SourceFilePath));
+			GeneratedAssetMessages.Add(FString::Printf(
+				TEXT("Generated %s %s from %s."),
+				GetMaterialFunctionBlockKindText(FunctionDefinition.Kind),
+				*GeneratedAssetPath,
+				*SourceFilePath));
 		}
 
 		if (!Definition.Name.IsEmpty())
@@ -1593,7 +1706,7 @@ namespace UE::DreamShader::Editor
 				return true;
 			}
 
-			OutMessage = FString::Printf(TEXT("DreamShader file '%s' did not contain any material or ShaderFunction assets to generate."), *SourceFilePath);
+			OutMessage = FString::Printf(TEXT("DreamShader file '%s' did not contain any material, ShaderFunction, MaterialLayer, or MaterialLayerBlend assets to generate."), *SourceFilePath);
 			return false;
 		}
 
@@ -1725,7 +1838,8 @@ namespace UE::DreamShader::Editor
 			GeneratedPropertyExpressions.Add(Property.Name, PropertyExpression);
 			Private::FCodeValue PropertyValue;
 			PropertyValue.Expression = PropertyExpression;
-			PropertyValue.ComponentCount = Property.Type == ETextShaderPropertyType::Texture2D ? 0 : Property.ComponentCount;
+			PropertyValue.OutputIndex = GetPreferredOutputIndexForProperty(Property, PropertyExpression);
+			PropertyValue.ComponentCount = GetGraphComponentCountForProperty(Property);
 			PropertyValue.bIsTextureObject = Property.Type == ETextShaderPropertyType::Texture2D;
 			GeneratedCodeValues.Add(Property.Name, PropertyValue);
 			ParameterPositionY += 220;

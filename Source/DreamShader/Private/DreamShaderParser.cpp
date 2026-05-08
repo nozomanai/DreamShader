@@ -579,42 +579,6 @@ namespace UE::DreamShader
 					return false;
 				}
 			}
-			else if (Scanner.TryConsumeKeyword(TEXT("ShaderFunction")))
-			{
-				TMap<FString, FString> Attributes;
-				if (!Scanner.ParseAttributes(Attributes, OutError))
-				{
-					return false;
-				}
-
-				FTextShaderMaterialFunctionDefinition Function;
-				if (const FString* Name = Attributes.Find(TEXT("Name")))
-				{
-					Function.Name = *Name;
-				}
-				else
-				{
-					OutError = TEXT("ShaderFunction(Name=\"...\") is required.");
-					return false;
-				}
-				if (const FString* Root = Attributes.Find(TEXT("Root")))
-				{
-					Function.Root = *Root;
-				}
-
-				FString BodyContent;
-				if (!Scanner.ExtractBalancedBlock(BodyContent, OutError))
-				{
-					return false;
-				}
-
-				if (!Private::ParseMaterialFunctionBody(BodyContent, Function, OutError))
-				{
-					return false;
-				}
-
-				OutDefinition.MaterialFunctions.Add(Function);
-			}
 			else if (Scanner.TryConsumeKeyword(TEXT("VirtualFunction")))
 			{
 				TMap<FString, FString> Attributes;
@@ -678,14 +642,69 @@ namespace UE::DreamShader
 			}
 			else
 			{
-				OutError = FString::Printf(TEXT("Unexpected token near index %d."), Scanner.Index);
-				return false;
+				FString MaterialFunctionBlockName;
+				ETextShaderMaterialFunctionKind MaterialFunctionKind = ETextShaderMaterialFunctionKind::ShaderFunction;
+				if (Scanner.TryConsumeKeyword(TEXT("ShaderFunction")))
+				{
+					MaterialFunctionBlockName = TEXT("ShaderFunction");
+				}
+				else if (Scanner.TryConsumeKeyword(TEXT("MaterialLayerBlend")))
+				{
+					MaterialFunctionBlockName = TEXT("MaterialLayerBlend");
+					MaterialFunctionKind = ETextShaderMaterialFunctionKind::MaterialLayerBlend;
+				}
+				else if (Scanner.TryConsumeKeyword(TEXT("MaterialLayer")))
+				{
+					MaterialFunctionBlockName = TEXT("MaterialLayer");
+					MaterialFunctionKind = ETextShaderMaterialFunctionKind::MaterialLayer;
+				}
+
+				if (MaterialFunctionBlockName.IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("Unexpected token near index %d."), Scanner.Index);
+					return false;
+				}
+
+				TMap<FString, FString> Attributes;
+				if (!Scanner.ParseAttributes(Attributes, OutError))
+				{
+					return false;
+				}
+
+				FTextShaderMaterialFunctionDefinition Function;
+				Function.Kind = MaterialFunctionKind;
+				if (const FString* Name = Attributes.Find(TEXT("Name")))
+				{
+					Function.Name = *Name;
+				}
+				else
+				{
+					OutError = FString::Printf(TEXT("%s(Name=\"...\") is required."), *MaterialFunctionBlockName);
+					return false;
+				}
+				if (const FString* Root = Attributes.Find(TEXT("Root")))
+				{
+					Function.Root = *Root;
+				}
+
+				FString BodyContent;
+				if (!Scanner.ExtractBalancedBlock(BodyContent, OutError))
+				{
+					return false;
+				}
+
+				if (!Private::ParseMaterialFunctionBody(BodyContent, Function, OutError))
+				{
+					return false;
+				}
+
+				OutDefinition.MaterialFunctions.Add(Function);
 			}
 		}
 
 		if (!bFoundShader && OutDefinition.Functions.IsEmpty() && OutDefinition.MaterialFunctions.IsEmpty() && OutDefinition.VirtualFunctions.IsEmpty())
 		{
-			OutError = TEXT("A top-level Shader, Function, Namespace, ShaderFunction, or VirtualFunction block was not found.");
+			OutError = TEXT("A top-level Shader, Function, Namespace, ShaderFunction, MaterialLayer, MaterialLayerBlend, or VirtualFunction block was not found.");
 			return false;
 		}
 

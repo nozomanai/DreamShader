@@ -1,5 +1,15 @@
 # DreamShader ChangeLog
 
+## 1.3.0 - 2026-05-08
+
+### Material Layer Functions
+
+- Added top-level `MaterialLayer(Name="...", Root="...")` and `MaterialLayerBlend(Name="...", Root="...")` blocks.
+- Generated Material Layer assets are standard `UMaterialFunction` assets with Unreal `MaterialFunctionUsage` set to `MaterialLayer` or `MaterialLayerBlend`.
+- `MaterialLayer` / `MaterialLayerBlend` reuse the existing `Properties`, `Inputs`, `Outputs`, `Settings`, and `Graph` sections.
+- Added validation that Material Layer blocks output exactly one `MaterialAttributes` value, and Material Layer Blend blocks declare at least two `MaterialAttributes` inputs.
+- Vector parameter properties now keep their RGBA output available in Graph, so `.a` / `.w` can read alpha and assignments to lower component counts automatically use leading channels.
+
 ## 1.2.10 - 2026-05-08
 
 ### VSCode MaterialExpression Manifest

@@ -2149,6 +2149,13 @@ namespace UE::DreamShader::Editor::Private
 			return true;
 		}
 
+		if (ExpectedComponentCount > 0 && InValue.ComponentCount > ExpectedComponentCount)
+		{
+			static const TCHAR* LeadingSwizzles[] = { TEXT(""), TEXT("r"), TEXT("rg"), TEXT("rgb"), TEXT("rgba") };
+			check(ExpectedComponentCount < UE_ARRAY_COUNT(LeadingSwizzles));
+			return CreateSwizzleExpression(InValue, LeadingSwizzles[ExpectedComponentCount], OutValue, OutError);
+		}
+
 		if (ExpectedComponentCount > 1 && InValue.ComponentCount == 1)
 		{
 			TArray<FCodeValue> ReplicatedParts;
@@ -2866,6 +2873,21 @@ namespace UE::DreamShader::Editor::Private
 		FCodeValue& OutValue,
 		FString& OutError)
 	{
+		static const TCHAR* ChannelNames[] = { TEXT("R"), TEXT("G"), TEXT("B"), TEXT("A") };
+		if (ChannelIndex >= 0 && ChannelIndex < UE_ARRAY_COUNT(ChannelNames))
+		{
+			int32 DirectOutputIndex = INDEX_NONE;
+			if (TryResolveExpressionOutputIndex(BaseValue.Expression, ChannelNames[ChannelIndex], DirectOutputIndex))
+			{
+				OutValue.Expression = BaseValue.Expression;
+				OutValue.OutputIndex = DirectOutputIndex;
+				OutValue.ComponentCount = 1;
+				OutValue.bIsTextureObject = false;
+				OutValue.bIsMaterialAttributes = false;
+				return true;
+			}
+		}
+
 		auto* MaskExpression = Cast<UMaterialExpressionComponentMask>(
 			CreateExpression(UMaterialExpressionComponentMask::StaticClass(), 400, ConsumeNodeY()));
 		if (!MaskExpression)
@@ -2933,6 +2955,20 @@ namespace UE::DreamShader::Editor::Private
 		{
 			OutError = FString::Printf(TEXT("Unsupported swizzle '%s'."), *Swizzle);
 			return false;
+		}
+
+		if (BaseValue.Expression && (Swizzle.Equals(TEXT("rgb"), ESearchCase::IgnoreCase) || Swizzle.Equals(TEXT("rgba"), ESearchCase::IgnoreCase)))
+		{
+			int32 DirectOutputIndex = INDEX_NONE;
+			if (TryResolveExpressionOutputIndex(BaseValue.Expression, Swizzle.ToUpper(), DirectOutputIndex))
+			{
+				OutValue.Expression = BaseValue.Expression;
+				OutValue.OutputIndex = DirectOutputIndex;
+				OutValue.ComponentCount = Swizzle.Len();
+				OutValue.bIsTextureObject = false;
+				OutValue.bIsMaterialAttributes = false;
+				return true;
+			}
 		}
 
 		TArray<FCodeValue> Channels;

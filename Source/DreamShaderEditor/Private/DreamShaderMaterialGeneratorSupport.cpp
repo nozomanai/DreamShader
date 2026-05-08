@@ -3282,25 +3282,7 @@ namespace UE::DreamShader::Editor::Private
 				return nullptr;
 			}
 
-			if (Property.ComponentCount >= 4)
-			{
-				return ParameterExpression;
-			}
-
-			auto* MaskExpression = Cast<UMaterialExpressionComponentMask>(
-				CreateOwnedMaterialExpression(Material, MaterialFunction, UMaterialExpressionComponentMask::StaticClass(), -560, PositionY));
-			if (!MaskExpression)
-			{
-				OutError = FString::Printf(TEXT("Failed to create a component mask for property '%s'."), *Property.Name);
-				return nullptr;
-			}
-
-			MaskExpression->Input.Expression = ParameterExpression;
-			MaskExpression->R = Property.ComponentCount >= 1;
-			MaskExpression->G = Property.ComponentCount >= 2;
-			MaskExpression->B = Property.ComponentCount >= 3;
-			MaskExpression->A = false;
-			return MaskExpression;
+			return ParameterExpression;
 		}
 
 		auto* Expression = Cast<UMaterialExpressionTextureObjectParameter>(

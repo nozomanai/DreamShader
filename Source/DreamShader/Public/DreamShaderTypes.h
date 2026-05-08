@@ -93,10 +93,18 @@ namespace UE::DreamShader
 		FString HLSL;
 	};
 
+	enum class ETextShaderMaterialFunctionKind : uint8
+	{
+		ShaderFunction,
+		MaterialLayer,
+		MaterialLayerBlend,
+	};
+
 	struct FTextShaderMaterialFunctionDefinition
 	{
 		FString Name;
 		FString Root;
+		ETextShaderMaterialFunctionKind Kind = ETextShaderMaterialFunctionKind::ShaderFunction;
 		TArray<FTextShaderPropertyDefinition> Properties;
 		TArray<FTextShaderFunctionParameter> Inputs;
 		TArray<FTextShaderFunctionParameter> Outputs;
