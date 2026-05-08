@@ -21,6 +21,7 @@
 #include "IMaterialEditor.h"
 #include "Interfaces/IPluginManager.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
@@ -39,6 +40,7 @@
 #include "ToolMenu.h"
 #include "ToolMenus.h"
 #include "UObject/MetaData.h"
+#include "UObject/UObjectIterator.h"
 #include "UObject/Package.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
@@ -936,6 +938,229 @@ namespace UE::DreamShader::Editor::Private
 			return FString::Printf(TEXT("\"%s\""), *Escaped);
 		}
 
+		FString GetMaterialExpressionManifestFilePath()
+		{
+			return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamShader/Bridge/material-expressions.json"));
+		}
+
+		FString GetMaterialExpressionShortName(const UClass* Class)
+		{
+			if (!Class)
+			{
+				return FString();
+			}
+
+			FString Name = Class->GetName();
+			Name.RemoveFromStart(TEXT("U"), ESearchCase::CaseSensitive);
+			Name.RemoveFromStart(TEXT("MaterialExpression"), ESearchCase::CaseSensitive);
+			return Name;
+		}
+
+		FString GetReflectedPropertyTypeName(const FProperty* Property)
+		{
+			if (!Property)
+			{
+				return TEXT("unknown");
+			}
+
+			if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+			{
+				if (StructProperty->Struct && StructProperty->Struct->GetFName() == NAME_ExpressionInput)
+				{
+					return TEXT("input");
+				}
+				return StructProperty->Struct ? StructProperty->Struct->GetName() : TEXT("struct");
+			}
+			if (CastField<FBoolProperty>(Property))
+			{
+				return TEXT("bool");
+			}
+			if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
+			{
+				if (NumericProperty->IsFloatingPoint())
+				{
+					return TEXT("float");
+				}
+				if (NumericProperty->IsInteger())
+				{
+					return TEXT("int");
+				}
+				return TEXT("number");
+			}
+			if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+			{
+				return EnumProperty->GetEnum() ? EnumProperty->GetEnum()->GetName() : TEXT("enum");
+			}
+			if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+			{
+				return ByteProperty->Enum ? ByteProperty->Enum->GetName() : TEXT("byte");
+			}
+			if (CastField<FNameProperty>(Property))
+			{
+				return TEXT("name");
+			}
+			if (CastField<FStrProperty>(Property) || CastField<FTextProperty>(Property))
+			{
+				return TEXT("string");
+			}
+			if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property))
+			{
+				return ObjectProperty->PropertyClass ? ObjectProperty->PropertyClass->GetName() : TEXT("object");
+			}
+			if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+			{
+				return FString::Printf(TEXT("array<%s>"), *GetReflectedPropertyTypeName(ArrayProperty->Inner));
+			}
+
+			return Property->GetCPPType();
+		}
+
+		bool IsExportedMaterialExpressionProperty(const FProperty* Property)
+		{
+			if (!Property || Property->HasAnyPropertyFlags(CPF_Deprecated | CPF_Transient | CPF_DuplicateTransient))
+			{
+				return false;
+			}
+
+			return UE::DreamShader::Editor::Private::IsMaterialExpressionInputProperty(Property)
+				|| Property->HasAnyPropertyFlags(CPF_Edit);
+		}
+
+		int32 GetExpressionOutputComponentCount(const FExpressionOutput& Output)
+		{
+			const int32 MaskCount =
+				(Output.MaskR ? 1 : 0)
+				+ (Output.MaskG ? 1 : 0)
+				+ (Output.MaskB ? 1 : 0)
+				+ (Output.MaskA ? 1 : 0);
+			return MaskCount > 0 ? MaskCount : 1;
+		}
+
+		FString GetOutputTypeNameFromComponentCount(const int32 ComponentCount)
+		{
+			if (ComponentCount <= 1)
+			{
+				return TEXT("float1");
+			}
+			if (ComponentCount == 2)
+			{
+				return TEXT("float2");
+			}
+			if (ComponentCount == 3)
+			{
+				return TEXT("float3");
+			}
+			return TEXT("float4");
+		}
+
+		void ExportMaterialExpressionManifest()
+		{
+			const FString ManifestPath = GetMaterialExpressionManifestFilePath();
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ManifestPath), true);
+
+			TArray<TSharedPtr<FJsonValue>> ExpressionValues;
+
+			for (TObjectIterator<UClass> It; It; ++It)
+			{
+				UClass* Class = *It;
+				if (!Class
+					|| !Class->IsChildOf(UMaterialExpression::StaticClass())
+					|| Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+				{
+					continue;
+				}
+
+				const FString ShortName = GetMaterialExpressionShortName(Class);
+				if (ShortName.IsEmpty())
+				{
+					continue;
+				}
+
+				TSharedRef<FJsonObject> ExpressionObject = MakeShared<FJsonObject>();
+				ExpressionObject->SetStringField(TEXT("name"), ShortName);
+				ExpressionObject->SetStringField(TEXT("className"), Class->GetName());
+				ExpressionObject->SetStringField(TEXT("pathName"), Class->GetPathName());
+
+				TArray<TSharedPtr<FJsonValue>> PropertyValues;
+				TArray<TSharedPtr<FJsonValue>> InputValues;
+				for (TFieldIterator<FProperty> PropertyIt(Class, EFieldIteratorFlags::IncludeSuper); PropertyIt; ++PropertyIt)
+				{
+					FProperty* Property = *PropertyIt;
+					if (!IsExportedMaterialExpressionProperty(Property))
+					{
+						continue;
+					}
+
+					const bool bIsInput = UE::DreamShader::Editor::Private::IsMaterialExpressionInputProperty(Property);
+					TSharedRef<FJsonObject> PropertyObject = MakeShared<FJsonObject>();
+					PropertyObject->SetStringField(TEXT("name"), Property->GetName());
+					PropertyObject->SetStringField(TEXT("type"), GetReflectedPropertyTypeName(Property));
+					PropertyObject->SetBoolField(TEXT("isInput"), bIsInput);
+
+					PropertyValues.Add(MakeShared<FJsonValueObject>(PropertyObject));
+					if (bIsInput)
+					{
+						InputValues.Add(MakeShared<FJsonValueObject>(PropertyObject));
+					}
+				}
+				ExpressionObject->SetArrayField(TEXT("properties"), PropertyValues);
+				ExpressionObject->SetArrayField(TEXT("inputs"), InputValues);
+
+				TArray<TSharedPtr<FJsonValue>> OutputValues;
+				if (const UMaterialExpression* DefaultExpression = Cast<UMaterialExpression>(Class->GetDefaultObject(false)))
+				{
+					for (int32 OutputIndex = 0; OutputIndex < DefaultExpression->Outputs.Num(); ++OutputIndex)
+					{
+						const FExpressionOutput& Output = DefaultExpression->Outputs[OutputIndex];
+						const int32 ComponentCount = GetExpressionOutputComponentCount(Output);
+
+						TSharedRef<FJsonObject> OutputObject = MakeShared<FJsonObject>();
+						OutputObject->SetNumberField(TEXT("index"), OutputIndex);
+						OutputObject->SetStringField(TEXT("name"), Output.OutputName.ToString());
+						OutputObject->SetNumberField(TEXT("componentCount"), ComponentCount);
+						OutputObject->SetStringField(TEXT("outputType"), GetOutputTypeNameFromComponentCount(ComponentCount));
+						OutputValues.Add(MakeShared<FJsonValueObject>(OutputObject));
+					}
+				}
+				ExpressionObject->SetArrayField(TEXT("outputs"), OutputValues);
+				ExpressionObject->SetStringField(
+					TEXT("defaultOutputType"),
+					OutputValues.IsEmpty()
+						? TEXT("float1")
+						: OutputValues[0]->AsObject()->GetStringField(TEXT("outputType")));
+
+				ExpressionValues.Add(MakeShared<FJsonValueObject>(ExpressionObject));
+			}
+
+			ExpressionValues.Sort([](const TSharedPtr<FJsonValue>& Left, const TSharedPtr<FJsonValue>& Right)
+			{
+				const TSharedPtr<FJsonObject> LeftObject = Left.IsValid() ? Left->AsObject() : nullptr;
+				const TSharedPtr<FJsonObject> RightObject = Right.IsValid() ? Right->AsObject() : nullptr;
+				return LeftObject.IsValid()
+					&& RightObject.IsValid()
+					&& LeftObject->GetStringField(TEXT("name")) < RightObject->GetStringField(TEXT("name"));
+			});
+
+			TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
+			RootObject->SetStringField(TEXT("schema"), TEXT("DreamShader.MaterialExpressions"));
+			RootObject->SetNumberField(TEXT("version"), 1);
+			RootObject->SetStringField(TEXT("generatedAt"), FDateTime::UtcNow().ToIso8601());
+			RootObject->SetArrayField(TEXT("expressions"), ExpressionValues);
+
+			FString ManifestText;
+			const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ManifestText);
+			FJsonSerializer::Serialize(RootObject, Writer);
+
+			if (FFileHelper::SaveStringToFile(ManifestText, *ManifestPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				UE_LOG(LogDreamShader, Display, TEXT("Wrote DreamShader MaterialExpression manifest: %s"), *ManifestPath);
+			}
+			else
+			{
+				UE_LOG(LogDreamShader, Warning, TEXT("Failed to write DreamShader MaterialExpression manifest: %s"), *ManifestPath);
+			}
+		}
+
 		bool WriteDreamShaderWorkspaceFile(FString& OutWorkspaceFilePath, FString& OutError)
 		{
 			const FString SourceDirectory = UE::DreamShader::NormalizeSourceFilePath(UE::DreamShader::GetSourceShaderDirectory());
@@ -1452,6 +1677,7 @@ namespace UE::DreamShader::Editor::Private
 		IFileManager::Get().MakeDirectory(*GetBridgeDirectory(), true);
 		IFileManager::Get().MakeDirectory(*GetRequestDirectory(), true);
 
+		ExportMaterialExpressionManifest();
 		SyncVirtualFunctionDefinitions();
 		QueueFullScan();
 		UpdateDiagnosticsFile();
@@ -2076,6 +2302,8 @@ namespace UE::DreamShader::Editor::Private
 		{
 			return;
 		}
+
+		ExportMaterialExpressionManifest();
 
 		FString WorkspaceFilePath;
 		FString Error;

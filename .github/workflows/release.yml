@@ -100,6 +100,34 @@ jobs:
           Compress-Archive -Path $PluginRoot -DestinationPath $ZipPath -Force
           "DREAMSHADER_ZIP=$ZipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Download latest VSCode extension release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $ExtensionArtifactRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\vscode-extension'
+          Remove-Item -LiteralPath $ExtensionArtifactRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $ExtensionArtifactRoot -Force | Out-Null
+
+          gh release download `
+            --repo TypeDreamMoon/dreamshader-language-support `
+            --pattern '*' `
+            --dir $ExtensionArtifactRoot
+
+          $DownloadedAssets = Get-ChildItem -LiteralPath $ExtensionArtifactRoot -File | Sort-Object Name
+          if ($DownloadedAssets.Count -eq 0) {
+            throw 'No assets were downloaded from TypeDreamMoon/dreamshader-language-support latest release.'
+          }
+
+          Write-Host "Downloaded VSCode extension release assets:"
+          foreach ($Asset in $DownloadedAssets) {
+            Write-Host " - $($Asset.Name)"
+          }
+
+          "DREAMSHADER_VSCODE_ASSET_DIR=$ExtensionArtifactRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Build release notes
         shell: pwsh
         run: |
@@ -145,10 +173,17 @@ jobs:
           $ZipPath = $env:DREAMSHADER_ZIP
           $NotesPath = $env:DREAMSHADER_NOTES
           $IsPrerelease = '${{ github.event.inputs.prerelease }}' -eq 'true'
+          $ReleaseAssets = @($ZipPath)
+
+          $VSCodeAssetDir = $env:DREAMSHADER_VSCODE_ASSET_DIR
+          if (![string]::IsNullOrWhiteSpace($VSCodeAssetDir) -and (Test-Path -LiteralPath $VSCodeAssetDir)) {
+            $VSCodeAssets = @(Get-ChildItem -LiteralPath $VSCodeAssetDir -File | Sort-Object Name | ForEach-Object { $_.FullName })
+            $ReleaseAssets += $VSCodeAssets
+          }
 
           $ReleaseArgs = @(
-            $TagName,
-            $ZipPath,
+            $TagName
+          ) + $ReleaseAssets + @(
             '--title', $Title,
             '--notes-file', $NotesPath
           )
@@ -159,7 +194,7 @@ jobs:
 
           gh release view $TagName *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $TagName $ZipPath --clobber
+            gh release upload $TagName @ReleaseAssets --clobber
             gh release edit $TagName --title $Title --notes-file $NotesPath
             if ($IsPrerelease) {
               gh release edit $TagName --prerelease

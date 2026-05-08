@@ -1,5 +1,14 @@
 # DreamShader ChangeLog
 
+## 1.2.10 - 2026-05-08
+
+### VSCode MaterialExpression Manifest
+
+- Added editor-side export of reflected `UMaterialExpression` metadata to `Saved/DreamShader/Bridge/material-expressions.json`.
+- The manifest is refreshed on editor bridge startup and when opening the DreamShader VSCode workspace.
+- Exported metadata includes expression class names, editable reflected properties, expression inputs, output pins, and inferred DreamShader `OutputType` hints.
+- Release workflow now downloads the latest `dreamshader-language-support` GitHub Release assets and attaches them to DreamShader releases.
+
 ## 1.2.6 - 2026-04-30
 
 ### ShaderFunction Properties
