@@ -1706,6 +1706,12 @@ namespace UE::DreamShader::Editor
 				return true;
 			}
 
+			if (!Definition.GraphFunctions.IsEmpty())
+			{
+				OutMessage = FString::Printf(TEXT("DreamShader file '%s' contains GraphFunction declarations only; no assets were generated."), *SourceFilePath);
+				return true;
+			}
+
 			OutMessage = FString::Printf(TEXT("DreamShader file '%s' did not contain any material, ShaderFunction, MaterialLayer, or MaterialLayerBlend assets to generate."), *SourceFilePath);
 			return false;
 		}

@@ -2623,15 +2623,23 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		const FTextShaderFunctionDefinition* Function = FindFunctionDefinition(CalleeName);
-		if (!Function)
+		const FTextShaderFunctionDefinition* GraphFunction = FindGraphFunctionDefinition(CalleeName);
+		if (!Function && !GraphFunction)
 		{
 			OutError = FString::Printf(
-				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function calls may use statement syntax."),
+				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function or GraphFunction calls may use statement syntax."),
 				*CalleeName);
 			return false;
 		}
+		if (Function && GraphFunction)
+		{
+			OutError = FString::Printf(TEXT("Graph expression statement '%s' is ambiguous because both Function and GraphFunction definitions exist."), *CalleeName);
+			return false;
+		}
 
-		return ExecuteCustomFunctionCall(*Function, Expression->Arguments, OutError);
+		return Function
+			? ExecuteCustomFunctionCall(*Function, Expression->Arguments, OutError)
+			: ExecuteGraphFunctionCall(*GraphFunction, Expression->Arguments, OutError);
 	}
 
 	bool FCodeGraphBuilder::EvaluateExpression(const TSharedPtr<FCodeExpression>& Expression, FCodeValue& OutValue, FString& OutError)
@@ -3055,6 +3063,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		const FTextShaderFunctionDefinition* CustomFunction = FindFunctionDefinition(CalleeName);
+		const FTextShaderFunctionDefinition* GraphFunction = FindGraphFunctionDefinition(CalleeName);
 		const FTextShaderMaterialFunctionDefinition* MaterialFunctionDefinition = FindMaterialFunctionDefinition(CalleeName);
 		const FTextShaderVirtualFunctionDefinition* VirtualFunctionDefinition = FindVirtualFunctionDefinition(CalleeName);
 
@@ -3062,6 +3071,10 @@ namespace UE::DreamShader::Editor::Private
 		if (CustomFunction)
 		{
 			MatchedKinds.Add(TEXT("Function"));
+		}
+		if (GraphFunction)
+		{
+			MatchedKinds.Add(TEXT("GraphFunction"));
 		}
 		if (MaterialFunctionDefinition)
 		{
@@ -3087,6 +3100,14 @@ namespace UE::DreamShader::Editor::Private
 		if (VirtualFunctionDefinition)
 		{
 			return EvaluateVirtualFunctionCall(*VirtualFunctionDefinition, Expression->Arguments, OutValue, OutError);
+		}
+		if (GraphFunction)
+		{
+			OutError = FString::Printf(
+				TEXT("DreamShader GraphFunction '%s' must be called as a statement with explicit out variables, for example %s(..., Result);"),
+				*CalleeName,
+				*CalleeName);
+			return false;
 		}
 
 		return EvaluateCustomFunctionCall(CalleeName, Expression->Arguments, OutValue, OutError);
@@ -3366,6 +3387,19 @@ namespace UE::DreamShader::Editor::Private
 	const FTextShaderFunctionDefinition* FCodeGraphBuilder::FindFunctionDefinition(const FString& FunctionName) const
 	{
 		for (const FTextShaderFunctionDefinition& Function : Definition.Functions)
+		{
+			if (Function.Name.Equals(FunctionName, ESearchCase::IgnoreCase))
+			{
+				return &Function;
+			}
+		}
+
+		return nullptr;
+	}
+
+	const FTextShaderFunctionDefinition* FCodeGraphBuilder::FindGraphFunctionDefinition(const FString& FunctionName) const
+	{
+		for (const FTextShaderFunctionDefinition& Function : Definition.GraphFunctions)
 		{
 			if (Function.Name.Equals(FunctionName, ESearchCase::IgnoreCase))
 			{
@@ -3674,6 +3708,206 @@ namespace UE::DreamShader::Editor::Private
 			ResultValue.bIsTextureObject = false;
 			ResultValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(ResultComponents, false);
 			(*Values).Add(ResultTargetNames[ResultIndex], ResultValue);
+		}
+
+		return true;
+	}
+
+	bool FCodeGraphBuilder::ExecuteGraphFunctionCall(
+		const FTextShaderFunctionDefinition& Function,
+		const TArray<FCodeCallArgument>& Arguments,
+		FString& OutError)
+	{
+		if (!Values)
+		{
+			OutError = TEXT("GraphFunction call requires an active Graph build context.");
+			return false;
+		}
+
+		if (Function.Results.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' must declare at least one out result."), *Function.Name);
+			return false;
+		}
+
+		static TArray<FString> ActiveGraphFunctionStack;
+		if (ActiveGraphFunctionStack.ContainsByPredicate([&Function](const FString& ActiveName)
+			{
+				return ActiveName.Equals(Function.Name, ESearchCase::IgnoreCase);
+			}))
+		{
+			TArray<FString> Cycle = ActiveGraphFunctionStack;
+			Cycle.Add(Function.Name);
+			OutError = FString::Printf(TEXT("GraphFunction cycle detected: %s."), *FString::Join(Cycle, TEXT(" -> ")));
+			return false;
+		}
+
+		struct FActiveGraphFunctionGuard
+		{
+			TArray<FString>& Stack;
+			explicit FActiveGraphFunctionGuard(TArray<FString>& InStack, const FString& Name)
+				: Stack(InStack)
+			{
+				Stack.Add(Name);
+			}
+			~FActiveGraphFunctionGuard()
+			{
+				Stack.Pop(EAllowShrinking::No);
+			}
+		};
+		FActiveGraphFunctionGuard ActiveGuard(ActiveGraphFunctionStack, Function.Name);
+
+		const int32 ExpectedArgumentCount = Function.Inputs.Num() + Function.Results.Num();
+		if (Arguments.Num() != ExpectedArgumentCount)
+		{
+			OutError = FString::Printf(
+				TEXT("DreamShader GraphFunction '%s' expects %d arguments (%d inputs, %d out targets) but got %d."),
+				*Function.Name,
+				ExpectedArgumentCount,
+				Function.Inputs.Num(),
+				Function.Results.Num(),
+				Arguments.Num());
+			return false;
+		}
+
+		for (const FCodeCallArgument& Argument : Arguments)
+		{
+			if (Argument.bIsNamed)
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' currently uses positional arguments only."), *Function.Name);
+				return false;
+			}
+		}
+
+		TMap<FString, FCodeValue> LocalValues = *Values;
+		for (int32 InputIndex = 0; InputIndex < Function.Inputs.Num(); ++InputIndex)
+		{
+			const FTextShaderFunctionParameter& InputDefinition = Function.Inputs[InputIndex];
+			FCodeValue InputValue;
+			if (!EvaluateExpression(Arguments[InputIndex].Expression, InputValue, OutError))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
+				return false;
+			}
+
+			int32 ExpectedComponentCount = 1;
+			bool bExpectedTexture = false;
+			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s' uses unsupported type '%s'."), *Function.Name, *InputDefinition.Name, *InputDefinition.Type);
+				return false;
+			}
+
+			FCodeValue CoercedValue;
+			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, CoercedValue, OutError))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
+				return false;
+			}
+
+			LocalValues.Add(InputDefinition.Name, CoercedValue);
+		}
+
+		TArray<FString> ResultTargetNames;
+		ResultTargetNames.Reserve(Function.Results.Num());
+		TSet<FString> SeenTargetNames;
+		for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
+		{
+			const FTextShaderFunctionParameter& ResultDefinition = Function.Results[ResultIndex];
+			const FCodeCallArgument& Argument = Arguments[Function.Inputs.Num() + ResultIndex];
+			if (!Argument.Expression || Argument.Expression->Kind != ECodeExpressionKind::Name)
+			{
+				OutError = FString::Printf(
+					TEXT("DreamShader GraphFunction '%s' out argument %d must be a plain variable name."),
+					*Function.Name,
+					ResultIndex + 1);
+				return false;
+			}
+
+			const FString TargetName = Argument.Expression->Text.TrimStartAndEnd();
+			if (TargetName.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' has an empty out target name."), *Function.Name);
+				return false;
+			}
+
+			if (SeenTargetNames.Contains(TargetName))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' cannot write multiple out results into '%s' in the same call."), *Function.Name, *TargetName);
+				return false;
+			}
+
+			FCodeValue DefaultResultValue;
+			if (!CreateDefaultValue(ResultDefinition.Type, DefaultResultValue, OutError))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' output '%s': %s"), *Function.Name, *ResultDefinition.Name, *OutError);
+				return false;
+			}
+
+			LocalValues.Add(ResultDefinition.Name, DefaultResultValue);
+			SeenTargetNames.Add(TargetName);
+			ResultTargetNames.Add(TargetName);
+		}
+
+		TArray<FCodeStatement> GraphStatements;
+		FString ParseError;
+		if (!ParseCodeStatements(Function.HLSL, GraphStatements, ParseError))
+		{
+			OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s': %s"), *Function.Name, *ParseError);
+			return false;
+		}
+
+		TMap<FString, FCodeValue>* PreviousValues = Values;
+		Values = &LocalValues;
+		for (const FCodeStatement& Statement : GraphStatements)
+		{
+			if (!ExecuteStatement(Statement, OutError))
+			{
+				Values = PreviousValues;
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s': %s"), *Function.Name, *OutError);
+				return false;
+			}
+		}
+		Values = PreviousValues;
+
+		for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
+		{
+			const FTextShaderFunctionParameter& ResultDefinition = Function.Results[ResultIndex];
+			const FCodeValue* LocalResultValue = LocalValues.Find(ResultDefinition.Name);
+			if (!LocalResultValue || !LocalResultValue->Expression)
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' output '%s' was never assigned."), *Function.Name, *ResultDefinition.Name);
+				return false;
+			}
+
+			int32 ExpectedComponentCount = 1;
+			bool bExpectedTexture = false;
+			if (!TryResolveCodeDeclaredType(ResultDefinition.Type, ExpectedComponentCount, bExpectedTexture))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' output '%s' uses unsupported type '%s'."), *Function.Name, *ResultDefinition.Name, *ResultDefinition.Type);
+				return false;
+			}
+
+			FCodeValue CoercedResultValue;
+			if (!CoerceValueToType(*LocalResultValue, ExpectedComponentCount, bExpectedTexture, CoercedResultValue, OutError))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' output '%s': %s"), *Function.Name, *ResultDefinition.Name, *OutError);
+				return false;
+			}
+
+			const FString& TargetName = ResultTargetNames[ResultIndex];
+			if (const FCodeValue* ExistingTargetValue = PreviousValues->Find(TargetName))
+			{
+				FCodeValue TargetCoercedValue;
+				if (!CoerceValueToType(CoercedResultValue, ExistingTargetValue->ComponentCount, ExistingTargetValue->bIsTextureObject, TargetCoercedValue, OutError))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' output target '%s': %s"), *Function.Name, *TargetName, *OutError);
+					return false;
+				}
+				CoercedResultValue = TargetCoercedValue;
+			}
+
+			PreviousValues->Add(TargetName, CoercedResultValue);
 		}
 
 		return true;

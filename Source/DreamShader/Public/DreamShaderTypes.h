@@ -133,6 +133,7 @@ namespace UE::DreamShader
 		FString Code;
 		FString HLSL;
 		TArray<FTextShaderFunctionDefinition> Functions;
+		TArray<FTextShaderFunctionDefinition> GraphFunctions;
 		TArray<FTextShaderMaterialFunctionDefinition> MaterialFunctions;
 		TArray<FTextShaderVirtualFunctionDefinition> VirtualFunctions;
 		TArray<FString> Warnings;

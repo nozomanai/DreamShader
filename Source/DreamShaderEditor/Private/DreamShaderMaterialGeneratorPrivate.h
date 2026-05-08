@@ -287,6 +287,7 @@ namespace UE::DreamShader::Editor::Private
 			FCodeValue& OutValue,
 			FString& OutError);
 		const FTextShaderFunctionDefinition* FindFunctionDefinition(const FString& FunctionName) const;
+		const FTextShaderFunctionDefinition* FindGraphFunctionDefinition(const FString& FunctionName) const;
 		const FTextShaderMaterialFunctionDefinition* FindMaterialFunctionDefinition(const FString& FunctionName) const;
 		const FTextShaderVirtualFunctionDefinition* FindVirtualFunctionDefinition(const FString& FunctionName) const;
 		bool EvaluateCustomFunctionCall(
@@ -295,6 +296,10 @@ namespace UE::DreamShader::Editor::Private
 			FCodeValue& OutValue,
 			FString& OutError);
 		bool ExecuteCustomFunctionCall(
+			const FTextShaderFunctionDefinition& Function,
+			const TArray<FCodeCallArgument>& Arguments,
+			FString& OutError);
+		bool ExecuteGraphFunctionCall(
 			const FTextShaderFunctionDefinition& Function,
 			const TArray<FCodeCallArgument>& Arguments,
 			FString& OutError);

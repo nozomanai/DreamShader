@@ -388,6 +388,7 @@ namespace UE::DreamShader
 			FScanner& Scanner,
 			const FString& NamespaceName,
 			FTextShaderDefinition& OutDefinition,
+			const bool bGraphFunction,
 			FString& OutError)
 		{
 			FTextShaderFunctionDefinition Function;
@@ -395,12 +396,16 @@ namespace UE::DreamShader
 			FString FunctionName;
 			if (!Scanner.ParseIdentifier(FunctionName, OutError))
 			{
-				OutError = TEXT("Function declaration is missing a valid function name.");
+				OutError = bGraphFunction
+					? TEXT("GraphFunction declaration is missing a valid function name.")
+					: TEXT("Function declaration is missing a valid function name.");
 				return false;
 			}
 
-			if (FunctionName.Equals(TEXT("SelfContained"), ESearchCase::IgnoreCase)
+			if (!bGraphFunction
+				&& (FunctionName.Equals(TEXT("SelfContained"), ESearchCase::IgnoreCase)
 				|| FunctionName.Equals(TEXT("Inline"), ESearchCase::IgnoreCase))
+				)
 			{
 				Function.bSelfContained = true;
 				if (!Scanner.ParseIdentifier(FunctionName, OutError))
@@ -417,14 +422,14 @@ namespace UE::DreamShader
 			FString ParameterBlock;
 			if (!ExtractBalancedDelimited(Scanner, TCHAR('('), TCHAR(')'), ParameterBlock, OutError))
 			{
-				OutError = FString::Printf(TEXT("Function '%s' is missing a valid parameter list. %s"), *QualifiedFunctionName, *OutError);
+				OutError = FString::Printf(TEXT("%s '%s' is missing a valid parameter list. %s"), bGraphFunction ? TEXT("GraphFunction") : TEXT("Function"), *QualifiedFunctionName, *OutError);
 				return false;
 			}
 
 			FString FunctionBody;
 			if (!ExtractBalancedDelimited(Scanner, TCHAR('{'), TCHAR('}'), FunctionBody, OutError))
 			{
-				OutError = FString::Printf(TEXT("Function '%s' is missing a valid body block. %s"), *QualifiedFunctionName, *OutError);
+				OutError = FString::Printf(TEXT("%s '%s' is missing a valid body block. %s"), bGraphFunction ? TEXT("GraphFunction") : TEXT("Function"), *QualifiedFunctionName, *OutError);
 				return false;
 			}
 
@@ -435,7 +440,14 @@ namespace UE::DreamShader
 			}
 
 			Function.HLSL = NormalizeShaderLanguageText(FunctionBody.TrimStartAndEnd());
-			OutDefinition.Functions.Add(Function);
+			if (bGraphFunction)
+			{
+				OutDefinition.GraphFunctions.Add(Function);
+			}
+			else
+			{
+				OutDefinition.Functions.Add(Function);
+			}
 			return true;
 		}
 
@@ -495,14 +507,23 @@ namespace UE::DreamShader
 
 				if (BodyScanner.TryConsumeKeyword(TEXT("Function")))
 				{
-					if (!ParseModernFunctionDeclaration(BodyScanner, NamespaceName, OutDefinition, OutError))
+					if (!ParseModernFunctionDeclaration(BodyScanner, NamespaceName, OutDefinition, false, OutError))
 					{
 						return false;
 					}
 					continue;
 				}
 
-				OutError = FString::Printf(TEXT("Namespace '%s' may only contain Function blocks."), *NamespaceName);
+				if (BodyScanner.TryConsumeKeyword(TEXT("GraphFunction")))
+				{
+					if (!ParseModernFunctionDeclaration(BodyScanner, NamespaceName, OutDefinition, true, OutError))
+					{
+						return false;
+					}
+					continue;
+				}
+
+				OutError = FString::Printf(TEXT("Namespace '%s' may only contain Function or GraphFunction blocks."), *NamespaceName);
 				return false;
 			}
 		}
@@ -567,7 +588,14 @@ namespace UE::DreamShader
 			}
 			else if (Scanner.TryConsumeKeyword(TEXT("Function")))
 			{
-				if (!Private::ParseModernFunctionDeclaration(Scanner, FString(), OutDefinition, OutError))
+				if (!Private::ParseModernFunctionDeclaration(Scanner, FString(), OutDefinition, false, OutError))
+				{
+					return false;
+				}
+			}
+			else if (Scanner.TryConsumeKeyword(TEXT("GraphFunction")))
+			{
+				if (!Private::ParseModernFunctionDeclaration(Scanner, FString(), OutDefinition, true, OutError))
 				{
 					return false;
 				}
@@ -702,9 +730,9 @@ namespace UE::DreamShader
 			}
 		}
 
-		if (!bFoundShader && OutDefinition.Functions.IsEmpty() && OutDefinition.MaterialFunctions.IsEmpty() && OutDefinition.VirtualFunctions.IsEmpty())
+		if (!bFoundShader && OutDefinition.Functions.IsEmpty() && OutDefinition.GraphFunctions.IsEmpty() && OutDefinition.MaterialFunctions.IsEmpty() && OutDefinition.VirtualFunctions.IsEmpty())
 		{
-			OutError = TEXT("A top-level Shader, Function, Namespace, ShaderFunction, MaterialLayer, MaterialLayerBlend, or VirtualFunction block was not found.");
+			OutError = TEXT("A top-level Shader, Function, GraphFunction, Namespace, ShaderFunction, MaterialLayer, MaterialLayerBlend, or VirtualFunction block was not found.");
 			return false;
 		}
 

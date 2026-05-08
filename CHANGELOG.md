@@ -1,5 +1,13 @@
 # DreamShader ChangeLog
 
+## 1.3.1 - 2026-05-09
+
+### Graph Functions
+
+- Added top-level and namespaced `GraphFunction` blocks for reusable graph-node logic.
+- `GraphFunction` calls expand into the caller's current Graph, so they can use `UE.*` material graph nodes such as `UE.TexCoord(...)`.
+- Added GraphFunction argument validation, local expansion scope, recursive call detection, and explicit out-variable writeback.
+
 ## 1.3.0 - 2026-05-08
 
 ### Material Layer Functions
