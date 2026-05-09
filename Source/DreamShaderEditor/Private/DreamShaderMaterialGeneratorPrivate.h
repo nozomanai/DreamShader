@@ -114,6 +114,7 @@ namespace UE::DreamShader::Editor::Private
 		bool bIsMaterialAttributes = false;
 	};
 
+	bool ParseCodeExpression(const FString& InExpression, TSharedPtr<FCodeExpression>& OutExpression, FString& OutError);
 	bool ParseCodeStatements(const FString& InCode, TArray<FCodeStatement>& OutStatements, FString& OutError);
 
 	bool ResolveMaterialProperty(const FString& InName, FResolvedMaterialProperty& OutProperty);
@@ -292,6 +293,11 @@ namespace UE::DreamShader::Editor::Private
 		const FTextShaderVirtualFunctionDefinition* FindVirtualFunctionDefinition(const FString& FunctionName) const;
 		bool EvaluateCustomFunctionCall(
 			const FString& FunctionName,
+			const TArray<FCodeCallArgument>& Arguments,
+			FCodeValue& OutValue,
+			FString& OutError);
+		bool EvaluateGraphFunctionCall(
+			const FTextShaderFunctionDefinition& Function,
 			const TArray<FCodeCallArgument>& Arguments,
 			FCodeValue& OutValue,
 			FString& OutError);

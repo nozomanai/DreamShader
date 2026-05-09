@@ -11,13 +11,13 @@ DreamShader 是一个 Unreal Engine 材质生成插件。它提供 `DreamShaderL
 
 - 使用文本源文件维护材质逻辑，减少手动连材质节点的重复工作。
 - 从 `Shader(Name="...", Root="Game")` 生成 `UMaterial`，从 `ShaderFunction(Name="...", Root="Game")` 生成 `UMaterialFunction`。
-- 从 `MaterialLayer(...)` / `MaterialLayerBlend(...)` 生成原生 Unreal Material Layer / Layer Blend 函数资产。
-- 使用 `GraphFunction` 复用可展开的材质图逻辑，可在其中调用 `UE.*` 材质节点。
+- 从 `ShaderLayer(...)` / `ShaderLayerBlend(...)` 生成原生 Unreal Material Layer / Layer Blend 函数资产。
+- 使用 `GraphFunction` 复用 HLSL Custom 节点逻辑，并在 HLSL body 中通过 `UE.*` 自动接入材质节点输入。
 - 使用 `VirtualFunction(Name="...")` 声明现有 Unreal `UMaterialFunction` 资产，并在 `Graph` 中直接调用，不会生成或覆盖资产。
 - `Properties` 支持显式 Parameter 节点、`const` helper 节点、`StaticSwitchParameter`、`UE.CollectionParam(...)` 和声明尾部 `[...]` 反射属性块。
 - `ShaderFunction` / `VirtualFunction` 输入支持 `opt` 和调用侧 `default`，用于复用 Unreal FunctionInput 的预览默认值。
 - `Graph` 支持 `MaterialAttributes` 聚合输出，可用 `Attrs.BaseColor = ...` 这种成员写法生成 Make/Set Material Attributes 节点。
-- 在 `Graph = { ... }` 中声明变量、调用 UE 材质节点、调用共享函数，并绑定材质输出。
+- 在 `Graph = { ... }` 中声明变量、调用 UE 材质节点、调用共享函数，并绑定材质输出；单返回值 helper 可直接作为值表达式调用。
 - 在 `Function` / `Namespace` 中编写可复用 HLSL 风格 helper；helper 之间的调用会在生成 HLSL 时重写为实际生成函数签名匹配的调用。
 - 支持 `Inline` / `SelfContained` 函数，把依赖代码嵌入材质 Custom 节点，便于在未安装 DreamShader 的项目中继续使用生成资产。
 - 支持 `.dsh` import graph，头文件变更时只重编受影响的 `.dsm`。
@@ -28,13 +28,13 @@ DreamShader 是一个 Unreal Engine 材质生成插件。它提供 `DreamShaderL
 
 | 文件或概念 | 用途 |
 | --- | --- |
-| `.dsm` | 材质实现文件，通常包含 `Shader(...)`、`ShaderFunction(...)`、`MaterialLayer(...)`、`MaterialLayerBlend(...)` 或 `VirtualFunction(...)`。 |
+| `.dsm` | 材质实现文件，通常包含 `Shader(...)`、`ShaderFunction(...)`、`ShaderLayer(...)`、`ShaderLayerBlend(...)` 或 `VirtualFunction(...)`。 |
 | `.dsh` | 共享头文件，通常包含 `Function`、`Namespace`、`VirtualFunction` 和 `import`。 |
 | `Graph` | `Shader` / `ShaderFunction` 内的材质图 DSL，用于生成材质节点。 |
 | `Function` | 可复用 helper，函数体按 HLSL 风格编写。 |
-| `GraphFunction` | 可复用材质图 helper，调用时展开到当前 Graph，允许使用 `UE.*` 节点。 |
+| `GraphFunction` | 可复用 HLSL Custom 节点 helper，允许把 body 中的 `UE.*` 调用自动转成 Custom 输入引脚。 |
 | `Namespace` | 组织一组 helper，例如 `Texture::Sample2DRGB(...)`。 |
-| `MaterialLayer` / `MaterialLayerBlend` | 生成 Unreal 原生 Material Layer / Layer Blend 用途的 `UMaterialFunction` 资产。 |
+| `ShaderLayer` / `ShaderLayerBlend` | 生成 Unreal 原生 Material Layer / Layer Blend 资产。`MaterialLayer` / `MaterialLayerBlend` 仍作为兼容别名保留。 |
 | `VirtualFunction` | 声明一个现有 `UMaterialFunction` 资产，供 `Graph` 作为值函数调用。 |
 | `Path(...)` | 为纹理属性、对象属性或 `VirtualFunction` 资产声明 Unreal 路径。 |
 | `DShader/Packages` | 项目安装的 DreamShader Package 目录。 |
@@ -254,6 +254,8 @@ Shader(Name="DreamMaterials/M_Tinted")
 `Function Name(...) { ... }` 是共享 helper 代码，适合放更自由的 HLSL 风格逻辑，例如 `for` / `while` / 复杂条件。`Function` 调用必须显式传入 `out` 目标变量。
 
 `Function` / `Namespace` helper 可以调用其他 DreamShader helper。生成器会识别函数体中的 `Color::ApplyTint(base, tint, result)` 这类显式 `out` 参数调用，并重写为生成 HLSL 的返回值赋值形式；Texture 类型参数会同步补入对应的 sampler 参数。
+
+`GraphFunction Name(...) { ... }` 仍按 HLSL Custom 节点生成，不会展开成一组材质图节点。它的区别是 body 中可以直接写 `UE.*(...)`，生成器会先创建对应 Unreal 材质节点，再把节点输出作为自动输入引脚传入 Custom 节点，从而省去在 `Shader` / `ShaderFunction` 的 `Graph` 中手动准备这些输入。
 
 > 迁移提示：`Shader` / `ShaderFunction` 的图逻辑使用 `Graph = { ... }`。`Code` 仍保留给 `Function` helper 语义，不再作为 `Shader` / `ShaderFunction` 的图 section 使用。
 

@@ -216,7 +216,7 @@ namespace UE::DreamShader::Editor::Private
 
 			const auto BuildLiteral = [&OutLiteral](const TCHAR* RootName, const FString& RelativePath)
 			{
-				OutLiteral = FString::Printf(TEXT("Path(%s, \"%s\")"), RootName, *EscapeDreamShaderString(RelativePath));
+				OutLiteral = FString::Printf(TEXT("Path(%s, %s)"), RootName, *RelativePath);
 			};
 
 			if (PackageName.StartsWith(TEXT("/Game/"), ESearchCase::IgnoreCase))
@@ -267,13 +267,13 @@ namespace UE::DreamShader::Editor::Private
 					RelativePath.RightChopInline(1, EAllowShrinking::No);
 				}
 				OutLiteral = FString::Printf(
-					TEXT("Path(Plugins.%s, \"%s\")"),
+					TEXT("Path(Plugins.%s, %s)"),
 					*BestPluginName,
-					*EscapeDreamShaderString(RelativePath));
+					*RelativePath);
 				return true;
 			}
 
-			OutLiteral = FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(MaterialFunction->GetPathName()));
+			OutLiteral = MaterialFunction->GetPathName();
 			return true;
 		}
 
@@ -943,6 +943,11 @@ namespace UE::DreamShader::Editor::Private
 			return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamShader/Bridge/material-expressions.json"));
 		}
 
+		FString GetDreamShaderSettingsManifestFilePath()
+		{
+			return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamShader/Bridge/settings.json"));
+		}
+
 		FString GetMaterialExpressionShortName(const UClass* Class)
 		{
 			if (!Class)
@@ -1051,6 +1056,86 @@ namespace UE::DreamShader::Editor::Private
 				return TEXT("float3");
 			}
 			return TEXT("float4");
+		}
+
+		template<typename EnumType>
+		TArray<TSharedPtr<FJsonValue>> BuildSettingsMappingValues(
+			const TMap<FString, TEnumAsByte<EnumType>>& Mappings,
+			const UEnum* Enum)
+		{
+			TArray<FString> Aliases;
+			Mappings.GetKeys(Aliases);
+			Aliases.Sort([](const FString& Left, const FString& Right)
+			{
+				return Left < Right;
+			});
+
+			TArray<TSharedPtr<FJsonValue>> MappingValues;
+			for (const FString& Alias : Aliases)
+			{
+				const TEnumAsByte<EnumType>* Value = Mappings.Find(Alias);
+				if (!Value)
+				{
+					continue;
+				}
+
+				const int64 EnumValue = static_cast<int64>(Value->GetValue());
+				TSharedRef<FJsonObject> MappingObject = MakeShared<FJsonObject>();
+				MappingObject->SetStringField(TEXT("alias"), Alias);
+				MappingObject->SetNumberField(TEXT("value"), static_cast<double>(EnumValue));
+				MappingObject->SetStringField(
+					TEXT("name"),
+					Enum ? Enum->GetNameStringByValue(EnumValue) : FString::FromInt(EnumValue));
+				MappingObject->SetStringField(
+					TEXT("displayName"),
+					Enum ? Enum->GetDisplayNameTextByValue(EnumValue).ToString() : FString());
+				MappingValues.Add(MakeShared<FJsonValueObject>(MappingObject));
+			}
+
+			return MappingValues;
+		}
+
+		void ExportDreamShaderSettingsManifest()
+		{
+			const FString ManifestPath = GetDreamShaderSettingsManifestFilePath();
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ManifestPath), true);
+
+			const UDreamShaderSettings* Settings = GetDefault<UDreamShaderSettings>();
+			if (!Settings)
+			{
+				UE_LOG(LogDreamShader, Warning, TEXT("Failed to read DreamShader settings for Bridge manifest."));
+				return;
+			}
+
+			TSharedRef<FJsonObject> MappingsObject = MakeShared<FJsonObject>();
+			MappingsObject->SetArrayField(
+				TEXT("ShadingModel"),
+				BuildSettingsMappingValues(Settings->ShadingModelMappings, StaticEnum<EMaterialShadingModel>()));
+			MappingsObject->SetArrayField(
+				TEXT("BlendMode"),
+				BuildSettingsMappingValues(Settings->BlendModeMappings, StaticEnum<EBlendMode>()));
+			MappingsObject->SetArrayField(
+				TEXT("MaterialDomain"),
+				BuildSettingsMappingValues(Settings->MaterialDomainMappings, StaticEnum<EMaterialDomain>()));
+
+			TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
+			RootObject->SetStringField(TEXT("schema"), TEXT("DreamShader.Settings"));
+			RootObject->SetNumberField(TEXT("version"), 1);
+			RootObject->SetStringField(TEXT("generatedAt"), FDateTime::UtcNow().ToIso8601());
+			RootObject->SetObjectField(TEXT("mappings"), MappingsObject);
+
+			FString ManifestText;
+			const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ManifestText);
+			FJsonSerializer::Serialize(RootObject, Writer);
+
+			if (FFileHelper::SaveStringToFile(ManifestText, *ManifestPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				UE_LOG(LogDreamShader, Display, TEXT("Wrote DreamShader settings manifest: %s"), *ManifestPath);
+			}
+			else
+			{
+				UE_LOG(LogDreamShader, Warning, TEXT("Failed to write DreamShader settings manifest: %s"), *ManifestPath);
+			}
 		}
 
 		void ExportMaterialExpressionManifest()
@@ -1678,6 +1763,7 @@ namespace UE::DreamShader::Editor::Private
 		IFileManager::Get().MakeDirectory(*GetRequestDirectory(), true);
 
 		ExportMaterialExpressionManifest();
+		ExportDreamShaderSettingsManifest();
 		SyncVirtualFunctionDefinitions();
 		QueueFullScan();
 		UpdateDiagnosticsFile();
@@ -2304,6 +2390,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		ExportMaterialExpressionManifest();
+		ExportDreamShaderSettingsManifest();
 
 		FString WorkspaceFilePath;
 		FString Error;

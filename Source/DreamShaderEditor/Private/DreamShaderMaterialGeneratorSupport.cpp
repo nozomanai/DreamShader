@@ -6,7 +6,6 @@
 #include "Misc/Crc.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "Factories/MaterialFunctionFactoryNew.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "FileHelpers.h"
 #include "Interfaces/IPluginManager.h"
@@ -37,6 +36,8 @@
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
 #include "Materials/MaterialFunction.h"
+#include "Materials/MaterialFunctionMaterialLayer.h"
+#include "Materials/MaterialFunctionMaterialLayerBlend.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "Engine/Texture.h"
@@ -1923,6 +1924,35 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
+	static bool TryRewriteValueFunctionCall(
+		const FTextShaderFunctionDefinition& Function,
+		const FString& GeneratedFunctionName,
+		const FString& ArgumentBlock,
+		FString& OutCall)
+	{
+		const TArray<FString> Arguments = SplitTopLevelCallArguments(ArgumentBlock);
+		if (Function.Results.Num() != 1 || Arguments.Num() != Function.Inputs.Num())
+		{
+			return false;
+		}
+
+		TArray<FString> Parameters;
+		for (int32 InputIndex = 0; InputIndex < Function.Inputs.Num(); ++InputIndex)
+		{
+			Parameters.Add(Arguments[InputIndex]);
+			if (IsTextureFunctionParameterType(Function.Inputs[InputIndex].Type))
+			{
+				Parameters.Add(BuildTextureSamplerArgumentName(Arguments[InputIndex]));
+			}
+		}
+
+		OutCall = FString::Printf(
+			TEXT("%s(%s)"),
+			*GeneratedFunctionName,
+			*FString::Join(Parameters, TEXT(", ")));
+		return true;
+	}
+
 	static void AddFunctionLookupEntries(
 		const FTextShaderFunctionDefinition& Function,
 		TMap<FString, const FTextShaderFunctionDefinition*>& OutFunctionsBySpelling,
@@ -2274,6 +2304,12 @@ namespace UE::DreamShader::Editor::Private
 								Index = CloseParenthesisIndex + 1;
 								continue;
 							}
+							if (TryRewriteValueFunctionCall(**Function, *Replacement, ArgumentBlock, RewrittenCall))
+							{
+								Result += RewrittenCall;
+								Index = CloseParenthesisIndex + 1;
+								continue;
+							}
 						}
 
 						Result += *Replacement;
@@ -2529,6 +2565,7 @@ namespace UE::DreamShader::Editor::Private
 
 		if (RootFunctions.IsEmpty())
 		{
+			OutCode = RewriteDreamShaderFunctionBodyCalls(SourceCode, FunctionsBySpelling, GeneratedNamesBySpelling);
 			bOutUsesGeneratedInclude = !DirectCalls.IsEmpty();
 			return true;
 		}
@@ -2548,13 +2585,16 @@ namespace UE::DreamShader::Editor::Private
 
 		const FString WrapperTypeName = BuildSelfContainedWrapperTypeName(WrapperNameHint);
 		const FString WrapperVariableName = BuildSelfContainedWrapperVariableName(WrapperNameHint);
+		TMap<FString, FString> CustomNodeReferenceReplacements = GeneratedNamesBySpelling;
 		for (const FTextShaderFunctionDefinition* Function : EmbeddedFunctions)
 		{
 			const FString GeneratedFunctionName = BuildGeneratedFunctionSymbolName(*Function);
 			EmbeddedReferenceReplacements.Add(Function->Name, WrapperVariableName + TEXT(".") + GeneratedFunctionName);
+			CustomNodeReferenceReplacements.Add(Function->Name, WrapperVariableName + TEXT(".") + GeneratedFunctionName);
 			if (!GeneratedFunctionName.Equals(Function->Name, ESearchCase::CaseSensitive))
 			{
 				EmbeddedReferenceReplacements.Add(GeneratedFunctionName, WrapperVariableName + TEXT(".") + GeneratedFunctionName);
+				CustomNodeReferenceReplacements.Add(GeneratedFunctionName, WrapperVariableName + TEXT(".") + GeneratedFunctionName);
 			}
 		}
 
@@ -2567,7 +2607,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 		WrapperSource += FString::Printf(TEXT("};\n%s %s;\n"), *WrapperTypeName, *WrapperVariableName);
 
-		OutCode = WrapperSource + TEXT("\n") + RewriteDreamShaderFunctionReferences(SourceCode, EmbeddedReferenceReplacements);
+		OutCode = WrapperSource + TEXT("\n") + RewriteDreamShaderFunctionBodyCalls(SourceCode, FunctionsBySpelling, CustomNodeReferenceReplacements);
 
 		for (const FTextShaderFunctionDefinition* DirectCall : DirectCalls)
 		{
@@ -4443,12 +4483,39 @@ namespace UE::DreamShader::Editor::Private
 			return false;
 		}
 
+		UClass* ExpectedClass = UMaterialFunction::StaticClass();
+		const TCHAR* ExpectedKindText = TEXT("ShaderFunction");
+		if (Definition.Kind == ETextShaderMaterialFunctionKind::MaterialLayer)
+		{
+			ExpectedClass = UMaterialFunctionMaterialLayer::StaticClass();
+			ExpectedKindText = TEXT("ShaderLayer");
+		}
+		else if (Definition.Kind == ETextShaderMaterialFunctionKind::MaterialLayerBlend)
+		{
+			ExpectedClass = UMaterialFunctionMaterialLayerBlend::StaticClass();
+			ExpectedKindText = TEXT("ShaderLayerBlend");
+		}
+
 		if (UObject* ExistingObject = LoadObject<UObject>(nullptr, *ObjectPath))
 		{
+			const bool bClassMatches = Definition.Kind == ETextShaderMaterialFunctionKind::ShaderFunction
+				? ExistingObject->GetClass() == ExpectedClass
+				: ExistingObject->IsA(ExpectedClass);
+			if (!bClassMatches)
+			{
+				OutError = FString::Printf(
+					TEXT("Asset '%s' already exists as '%s', but %s generation requires '%s'. Delete or move the existing asset and regenerate it."),
+					*ObjectPath,
+					*ExistingObject->GetClass()->GetName(),
+					ExpectedKindText,
+					*ExpectedClass->GetName());
+				return false;
+			}
+
 			OutFunction = Cast<UMaterialFunction>(ExistingObject);
 			if (!OutFunction)
 			{
-				OutError = FString::Printf(TEXT("Asset '%s' already exists and is not a MaterialFunction."), *ObjectPath);
+				OutError = FString::Printf(TEXT("Asset '%s' already exists and is not a MaterialFunction asset."), *ObjectPath);
 				return false;
 			}
 
@@ -4462,14 +4529,11 @@ namespace UE::DreamShader::Editor::Private
 			return false;
 		}
 
-		UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>();
-		OutFunction = Cast<UMaterialFunction>(Factory->FactoryCreateNew(
-			UMaterialFunction::StaticClass(),
+		OutFunction = Cast<UMaterialFunction>(NewObject<UObject>(
 			FunctionPackage,
+			ExpectedClass,
 			FName(*AssetName),
-			RF_Public | RF_Standalone,
-			nullptr,
-			GWarn));
+			RF_Public | RF_Standalone));
 
 		if (!OutFunction)
 		{

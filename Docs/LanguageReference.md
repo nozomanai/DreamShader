@@ -4,7 +4,7 @@ DreamShaderLang 是 DreamShader 插件使用的文本语言。它用 `.dsm` / `.
 
 | 项目 | 内容 |
 | --- | --- |
-| 插件版本 | `1.2.6` |
+| 插件版本 | `1.3.1` |
 | 源文件 | `.dsm` / `.dsh` |
 | 主要产物 | `UMaterial` / `UMaterialFunction` |
 | 开发者 | TypeDreamMoon |
@@ -17,6 +17,8 @@ Dream Shader Material。用于生成资产，通常包含：
 
 - `Shader(Name="...")`
 - `ShaderFunction(Name="...")`
+- `ShaderLayer(Name="...")`
+- `ShaderLayerBlend(Name="...")`
 - `VirtualFunction(Name="...")`
 - `import "Shared/Common.dsh";`
 
@@ -28,10 +30,11 @@ Dream Shader Header。用于存放共享代码，通常包含：
 
 - `import "OtherHeader.dsh";`
 - `Function Name(...) { ... }`
+- `GraphFunction Name(...) { ... }`
 - `Namespace(Name="...") { ... }`
 - `VirtualFunction(Name="...")`
 
-`.dsh` 不建议包含 `Shader(...)` 或 `ShaderFunction(...)`，但可以包含 `VirtualFunction(...)` 这种只声明现有资产的签名。
+`.dsh` 不建议包含 `Shader(...)`、`ShaderFunction(...)`、`ShaderLayer(...)` 或 `ShaderLayerBlend(...)`，但可以包含共享 `Function` / `GraphFunction` 和只声明现有资产签名的 `VirtualFunction(...)`。
 
 ## 2. 顶层声明
 
@@ -114,7 +117,19 @@ ShaderFunction(Name="Functions/F_Tint", Root="Plugin.MyPlugin")
 - `Outputs` 声明输出 pin。
 - `Graph` 负责生成材质函数内部图。
 
-### 2.3 `VirtualFunction(Name="...")`
+### 2.3 `ShaderLayer(Name="...", Root="...")` / `ShaderLayerBlend(Name="...", Root="...")`
+
+生成 Unreal 原生 Material Layer / Layer Blend 资产。旧语法 `MaterialLayer(...)` / `MaterialLayerBlend(...)` 仍可解析，但会产生兼容警告。
+
+规则：
+
+- `ShaderLayer` 会创建 `UMaterialFunctionMaterialLayer` 资产。
+- `ShaderLayerBlend` 会创建 `UMaterialFunctionMaterialLayerBlend` 资产。
+- 两者复用 `ShaderFunction` 的 `Properties`、`Inputs`、`Outputs`、`Settings` 和 `Graph` sections。
+- `ShaderLayer` / `ShaderLayerBlend` 必须声明且只声明一个 `MaterialAttributes` 输出。
+- `ShaderLayerBlend` 至少需要两个 `MaterialAttributes` 输入。
+
+### 2.4 `VirtualFunction(Name="...")`
 
 声明一个已经存在的 Unreal `UMaterialFunction`，让 `Graph` 可以像调用 `ShaderFunction` 一样调用它。`VirtualFunction` 不会生成、保存或覆盖对应资产。
 
@@ -153,7 +168,7 @@ Graph = {
 }
 ```
 
-### 2.4 `Function [Inline|SelfContained] Name(...) { ... }`
+### 2.5 `Function [Inline|SelfContained] Name(...) { ... }`
 
 定义可复用 helper。函数体是 HLSL 风格代码。
 
@@ -180,7 +195,27 @@ Function SelfContained ApplyTint(in vec3 color, in vec3 tint, out vec3 result) {
 - 普通 `Function` 会生成 `.ush` 并由 Custom 节点 include。
 - `SelfContained` / `Inline` 会把依赖代码嵌入 Custom 节点，便于生成资产脱离 DreamShader 插件使用。
 
-### 2.5 `Namespace(Name="...")`
+### 2.6 `GraphFunction Name(...) { ... }`
+
+定义可复用 Custom 节点 helper。函数体仍是 HLSL 风格代码，但可以直接调用 `UE.*(...)` 作为自动输入来源。
+
+```c
+GraphFunction WindPulse(in float2 uv, out float pulse) {
+    float t = UE.Time();
+    pulse = sin(uv.x * 8.0 + t);
+}
+```
+
+规则：
+
+- 参数支持 `in` / `out`。
+- 至少声明一个 `out` 参数。
+- 单输出 `GraphFunction` 可以作为值表达式调用；多输出调用必须显式传入 `out` 目标变量。
+- 调用会生成一个 `UMaterialExpressionCustom` 节点，而不是把 body 展开成一组 Graph 语句。
+- body 中的 `UE.*(...)` 调用会先生成 Unreal 材质节点，再作为自动输入引脚连接到 Custom 节点。
+- body 中可以调用普通 `Function` / `Namespace::Function` HLSL helper，生成器会按普通 Custom 节点规则重写和 include。
+
+### 2.7 `Namespace(Name="...")`
 
 组织一组共享 helper。
 
@@ -201,7 +236,7 @@ Texture::Sample2DRGB(MainTex, uv, sampledColor);
 
 规则：
 
-- `Namespace` 内只能包含 `Function`。
+- `Namespace` 内只能包含 `Function` 或 `GraphFunction`。
 - namespace 名必须是合法标识符。
 - 生成 HLSL 时会把 `Texture::Sample2DRGB` 映射为安全的内部符号。
 
@@ -373,6 +408,7 @@ Options = {
 - `UE.CollectionParam(Collection=Path(...), Parameter="Name")` 读取 Material Parameter Collection。
 - `UE.StaticSwitchParameter(...)` 或 `StaticSwitchParameter` 属性调用。
 - `Function(...)` / `Namespace::Function(...)` 独立调用。
+- `GraphFunction(...)` / `Namespace::GraphFunction(...)` Custom 节点调用。
 - `ShaderFunction(...)` / `VirtualFunction(...)` 值调用。
 - `MaterialAttributes` 聚合值，以及 `Attrs.BaseColor = ...` / `Attrs.Roughness = ...` 形式的成员写入。
 - 基础 `if` / `else` 图分支。

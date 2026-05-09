@@ -2,20 +2,26 @@
 
 ## 1.3.1 - 2026-05-09
 
+### Function Calls
+
+- Single-output `Function` and `GraphFunction` calls can now be used as value expressions, for example `Color = Texture::Sample2DRGB(BaseTex, UV0);`.
+- Multi-output `Function` and `GraphFunction` calls still require explicit out variables, for example `Texture::Sample2D(BaseTex, UV0, Color, Alpha);`.
+
 ### Graph Functions
 
-- Added top-level and namespaced `GraphFunction` blocks for reusable graph-node logic.
-- `GraphFunction` calls expand into the caller's current Graph, so they can use `UE.*` material graph nodes such as `UE.TexCoord(...)`.
-- Added GraphFunction argument validation, local expansion scope, recursive call detection, and explicit out-variable writeback.
+- Added top-level and namespaced `GraphFunction` blocks for reusable HLSL Custom-node logic.
+- `GraphFunction` remains HLSL, but `UE.*` calls inside its body are converted into material nodes and passed into the Custom node as generated inputs.
+- Added GraphFunction argument validation, recursive call detection, and explicit out-variable writeback.
 
 ## 1.3.0 - 2026-05-08
 
-### Material Layer Functions
+### Shader Layer Functions
 
-- Added top-level `MaterialLayer(Name="...", Root="...")` and `MaterialLayerBlend(Name="...", Root="...")` blocks.
-- Generated Material Layer assets are standard `UMaterialFunction` assets with Unreal `MaterialFunctionUsage` set to `MaterialLayer` or `MaterialLayerBlend`.
-- `MaterialLayer` / `MaterialLayerBlend` reuse the existing `Properties`, `Inputs`, `Outputs`, `Settings`, and `Graph` sections.
-- Added validation that Material Layer blocks output exactly one `MaterialAttributes` value, and Material Layer Blend blocks declare at least two `MaterialAttributes` inputs.
+- Added top-level `ShaderLayer(Name="...", Root="...")` and `ShaderLayerBlend(Name="...", Root="...")` blocks.
+- Generated layer assets now use Unreal's native `UMaterialFunctionMaterialLayer` / `UMaterialFunctionMaterialLayerBlend` classes.
+- `MaterialLayer` / `MaterialLayerBlend` remain compatibility aliases and emit warnings; new source should use `ShaderLayer` / `ShaderLayerBlend`.
+- `ShaderLayer` / `ShaderLayerBlend` reuse the existing `Properties`, `Inputs`, `Outputs`, `Settings`, and `Graph` sections.
+- Added validation that Shader Layer blocks output exactly one `MaterialAttributes` value, and Shader Layer Blend blocks declare at least two `MaterialAttributes` inputs.
 - Vector parameter properties now keep their RGBA output available in Graph, so `.a` / `.w` can read alpha and assignments to lower component counts automatically use leading channels.
 
 ## 1.2.10 - 2026-05-08

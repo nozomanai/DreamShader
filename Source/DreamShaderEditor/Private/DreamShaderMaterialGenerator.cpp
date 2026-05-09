@@ -903,6 +903,8 @@ namespace UE::DreamShader::Editor
 			if (UE::DreamShader::IsDreamShaderHeaderFile(NormalizedPath)
 				&& (SanitizedSourceText.Contains(TEXT("Shader("), ESearchCase::IgnoreCase)
 					|| SanitizedSourceText.Contains(TEXT("ShaderFunction("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("ShaderLayer("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("ShaderLayerBlend("), ESearchCase::IgnoreCase)
 					|| SanitizedSourceText.Contains(TEXT("MaterialLayer("), ESearchCase::IgnoreCase)
 					|| SanitizedSourceText.Contains(TEXT("MaterialLayerBlend("), ESearchCase::IgnoreCase)))
 			{
@@ -1132,9 +1134,9 @@ namespace UE::DreamShader::Editor
 			switch (Kind)
 			{
 			case ETextShaderMaterialFunctionKind::MaterialLayer:
-				return TEXT("MaterialLayer");
+				return TEXT("ShaderLayer");
 			case ETextShaderMaterialFunctionKind::MaterialLayerBlend:
-				return TEXT("MaterialLayerBlend");
+				return TEXT("ShaderLayerBlend");
 			case ETextShaderMaterialFunctionKind::ShaderFunction:
 			default:
 				return TEXT("ShaderFunction");
@@ -1182,7 +1184,7 @@ namespace UE::DreamShader::Editor
 
 				if (MaterialAttributesInputCount < 2)
 				{
-					OutError = FString::Printf(TEXT("MaterialLayerBlend '%s' must declare at least two MaterialAttributes inputs."), *FunctionDefinition.Name);
+					OutError = FString::Printf(TEXT("ShaderLayerBlend '%s' must declare at least two MaterialAttributes inputs."), *FunctionDefinition.Name);
 					return false;
 				}
 			}
@@ -1712,11 +1714,16 @@ namespace UE::DreamShader::Editor
 				return true;
 			}
 
-			OutMessage = FString::Printf(TEXT("DreamShader file '%s' did not contain any material, ShaderFunction, MaterialLayer, or MaterialLayerBlend assets to generate."), *SourceFilePath);
+			OutMessage = FString::Printf(TEXT("DreamShader file '%s' did not contain any material, ShaderFunction, ShaderLayer, or ShaderLayerBlend assets to generate."), *SourceFilePath);
 			return false;
 		}
 
 		OutMessage = FString::Join(GeneratedAssetMessages, TEXT("\n"));
+		if (!Definition.Warnings.IsEmpty())
+		{
+			OutMessage += TEXT("\nWarnings:\n");
+			OutMessage += FString::Join(Definition.Warnings, TEXT("\n"));
+		}
 		return true;
 	}
 
