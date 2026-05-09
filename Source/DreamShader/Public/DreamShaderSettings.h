@@ -17,8 +17,11 @@ public:
 	virtual FName GetContainerName() const override { return TEXT("Project"); }
 	virtual FName GetCategoryName() const override { return TEXT("DreamPlugin"); }
 	virtual FName GetSectionName() const override { return TEXT("DreamShader"); }
+
+#if WITH_EDITOR
 	virtual FText GetSectionText() const override { return FText::FromString(TEXT("Dream Shader")); }
 	virtual FText GetSectionDescription() const override { return FText::FromString(TEXT("Dream Shader Settings")); }
+#endif
 
 	bool TryResolveShadingModel(const FString& InName, EMaterialShadingModel& OutShadingModel) const;
 	bool TryResolveBlendMode(const FString& InName, EBlendMode& OutBlendMode) const;
