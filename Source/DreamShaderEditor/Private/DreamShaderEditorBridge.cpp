@@ -681,6 +681,7 @@ namespace UE::DreamShader::Editor::Private
 		{
 			TArray<FString> MaterialFiles;
 			TArray<FString> HeaderFiles;
+			TArray<FString> FunctionFiles;
 			IFileManager::Get().FindFilesRecursive(
 				MaterialFiles,
 				*UE::DreamShader::GetSourceShaderDirectory(),
@@ -695,10 +696,18 @@ namespace UE::DreamShader::Editor::Private
 				true,
 				false,
 				false);
+			IFileManager::Get().FindFilesRecursive(
+				FunctionFiles,
+				*UE::DreamShader::GetSourceShaderDirectory(),
+				TEXT("*.dsf"),
+				true,
+				false,
+				false);
 
 			OutSourceFiles.Reset();
 			OutSourceFiles.Append(MaterialFiles);
 			OutSourceFiles.Append(HeaderFiles);
+			OutSourceFiles.Append(FunctionFiles);
 
 			for (FString& SourceFile : OutSourceFiles)
 			{
@@ -1279,6 +1288,7 @@ namespace UE::DreamShader::Editor::Private
 			Writer->WriteObjectStart(TEXT("files.associations"));
 			Writer->WriteValue(TEXT("*.dsm"), TEXT("dreamshaderlang"));
 			Writer->WriteValue(TEXT("*.dsh"), TEXT("dreamshaderlang"));
+			Writer->WriteValue(TEXT("*.dsf"), TEXT("dreamshaderlang"));
 			Writer->WriteObjectEnd();
 			Writer->WriteObjectEnd();
 			Writer->WriteObjectEnd();
@@ -1557,13 +1567,26 @@ namespace UE::DreamShader::Editor::Private
 
 		void FindProjectMaterialSourceFiles(TArray<FString>& OutSourceFiles)
 		{
+			TArray<FString> MaterialFiles;
+			TArray<FString> FunctionFiles;
 			IFileManager::Get().FindFilesRecursive(
-				OutSourceFiles,
+				MaterialFiles,
 				*UE::DreamShader::GetSourceShaderDirectory(),
 				TEXT("*.dsm"),
 				true,
 				false,
 				false);
+			IFileManager::Get().FindFilesRecursive(
+				FunctionFiles,
+				*UE::DreamShader::GetSourceShaderDirectory(),
+				TEXT("*.dsf"),
+				true,
+				false,
+				false);
+
+			OutSourceFiles.Reset();
+			OutSourceFiles.Append(MaterialFiles);
+			OutSourceFiles.Append(FunctionFiles);
 
 			for (FString& SourceFile : OutSourceFiles)
 			{
@@ -1610,7 +1633,7 @@ namespace UE::DreamShader::Editor::Private
 					continue;
 				}
 
-				if (UE::DreamShader::IsDreamShaderHeaderFile(ResolvedImportPath))
+				if (UE::DreamShader::IsDreamShaderHeaderFile(ResolvedImportPath) || UE::DreamShader::IsDreamShaderFunctionFile(ResolvedImportPath))
 				{
 					OutHeaders.Add(ResolvedImportPath);
 				}
@@ -1854,33 +1877,33 @@ namespace UE::DreamShader::Editor::Private
 		PendingFiles.Add(UE::DreamShader::NormalizeSourceFilePath(SourceFilePath), FPlatformTime::Seconds());
 	}
 
-	void FDreamShaderEditorBridge::QueueDependentMaterialsForHeader(const FString& HeaderFilePath)
+	void FDreamShaderEditorBridge::QueueDependentSourcesForImport(const FString& ImportFilePath)
 	{
-		const FString NormalizedHeaderPath = UE::DreamShader::NormalizeSourceFilePath(HeaderFilePath);
-		TSet<FString> MaterialsToQueue;
+		const FString NormalizedImportPath = UE::DreamShader::NormalizeSourceFilePath(ImportFilePath);
+		TSet<FString> SourcesToQueue;
 
-		if (const TSet<FString>* ExistingDependents = HeaderDependentsByFile.Find(NormalizedHeaderPath))
+		if (const TSet<FString>* ExistingDependents = HeaderDependentsByFile.Find(NormalizedImportPath))
 		{
 			for (const FString& Dependent : *ExistingDependents)
 			{
-				MaterialsToQueue.Add(Dependent);
+				SourcesToQueue.Add(Dependent);
 			}
 		}
 
 		RebuildDependencyGraph();
 
-		if (const TSet<FString>* RebuiltDependents = HeaderDependentsByFile.Find(NormalizedHeaderPath))
+		if (const TSet<FString>* RebuiltDependents = HeaderDependentsByFile.Find(NormalizedImportPath))
 		{
 			for (const FString& Dependent : *RebuiltDependents)
 			{
-				MaterialsToQueue.Add(Dependent);
+				SourcesToQueue.Add(Dependent);
 			}
 		}
 
 		const double Now = FPlatformTime::Seconds();
-		for (const FString& MaterialFile : MaterialsToQueue)
+		for (const FString& SourceFile : SourcesToQueue)
 		{
-			PendingFiles.Add(MaterialFile, Now);
+			PendingFiles.Add(SourceFile, Now);
 		}
 
 		const UDreamShaderSettings* Settings = GetDefault<UDreamShaderSettings>();
@@ -1889,9 +1912,9 @@ namespace UE::DreamShader::Editor::Private
 			UE_LOG(
 				LogDreamShader,
 				Display,
-				TEXT("DreamShader queued %d dependent .dsm file(s) for header '%s'."),
-				MaterialsToQueue.Num(),
-				*NormalizedHeaderPath);
+				TEXT("DreamShader queued %d dependent source file(s) for import '%s'."),
+				SourcesToQueue.Num(),
+				*NormalizedImportPath);
 		}
 	}
 
@@ -1930,7 +1953,15 @@ namespace UE::DreamShader::Editor::Private
 				{
 					if (UE::DreamShader::IsDreamShaderHeaderFile(FileChange.Filename))
 					{
-						Bridge->QueueDependentMaterialsForHeader(FileChange.Filename);
+						Bridge->QueueDependentSourcesForImport(FileChange.Filename);
+					}
+					else if (UE::DreamShader::IsDreamShaderFunctionFile(FileChange.Filename))
+					{
+						if (!IsPackageMaterialFile(FileChange.Filename))
+						{
+							Bridge->QueueSourceFile(FileChange.Filename);
+						}
+						Bridge->QueueDependentSourcesForImport(FileChange.Filename);
 					}
 					else if (IsPackageMaterialFile(FileChange.Filename))
 					{
@@ -1945,9 +1976,15 @@ namespace UE::DreamShader::Editor::Private
 				else if (FileChange.Action == FFileChangeData::FCA_Removed)
 				{
 					const FString SourceFile = UE::DreamShader::NormalizeSourceFilePath(FileChange.Filename);
-					if (UE::DreamShader::IsDreamShaderHeaderFile(FileChange.Filename))
+					if (UE::DreamShader::IsDreamShaderHeaderFile(FileChange.Filename) || UE::DreamShader::IsDreamShaderFunctionFile(FileChange.Filename))
 					{
-						Bridge->QueueDependentMaterialsForHeader(FileChange.Filename);
+						Bridge->QueueDependentSourcesForImport(FileChange.Filename);
+						if (UE::DreamShader::IsDreamShaderFunctionFile(FileChange.Filename))
+						{
+							Bridge->PendingFiles.Remove(SourceFile);
+							Bridge->ClearDiagnosticsForSourceAndDependencies(SourceFile);
+							Bridge->UpdateDiagnosticsFile();
+						}
 					}
 					else if (IsPackageMaterialFile(FileChange.Filename))
 					{
@@ -2179,7 +2216,7 @@ namespace UE::DreamShader::Editor::Private
 			Section.AddMenuEntry(
 				TEXT("DreamShader.RecompileAll"),
 				LOCTEXT("DreamShaderRecompileLabel", "Recompile DSM"),
-				LOCTEXT("DreamShaderRecompileTooltip", "Recompile all DreamShader .dsm files and refresh diagnostics."),
+				LOCTEXT("DreamShaderRecompileTooltip", "Recompile all DreamShader .dsm and .dsf source files and refresh diagnostics."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("Icons.Refresh")),
 				FUIAction(FExecuteAction::CreateSP(AsShared(), &FDreamShaderEditorBridge::RequestRecompileAll)));
 			Section.AddMenuEntry(
@@ -2203,7 +2240,7 @@ namespace UE::DreamShader::Editor::Private
 				TEXT("DreamShader.RecompileAllToolbar"),
 				FUIAction(FExecuteAction::CreateSP(AsShared(), &FDreamShaderEditorBridge::RequestRecompileAll)),
 				LOCTEXT("DreamShaderRecompileToolbarLabel", "DSM"),
-				LOCTEXT("DreamShaderRecompileToolbarTooltip", "Recompile all DreamShader .dsm files."),
+				LOCTEXT("DreamShaderRecompileToolbarTooltip", "Recompile all DreamShader .dsm and .dsf source files."),
 				FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("Icons.Refresh"))));
 			Section.AddEntry(FToolMenuEntry::InitToolBarButton(
 				TEXT("DreamShader.OpenWorkspaceToolbar"),
@@ -2367,7 +2404,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		QueueFullScan();
-		UE_LOG(LogDreamShader, Display, TEXT("DreamShader queued a full .dsm recompile scan."));
+		UE_LOG(LogDreamShader, Display, TEXT("DreamShader queued a full .dsm/.dsf recompile scan."));
 	}
 
 	void FDreamShaderEditorBridge::RequestCleanGeneratedShaders()
@@ -2379,7 +2416,7 @@ namespace UE::DreamShader::Editor::Private
 
 		CleanGeneratedShaderDirectory();
 		QueueFullScan();
-		UE_LOG(LogDreamShader, Display, TEXT("DreamShader cleaned generated shader includes and queued a full .dsm recompile scan."));
+		UE_LOG(LogDreamShader, Display, TEXT("DreamShader cleaned generated shader includes and queued a full .dsm/.dsf recompile scan."));
 	}
 
 	void FDreamShaderEditorBridge::OpenDreamShaderWorkspace()

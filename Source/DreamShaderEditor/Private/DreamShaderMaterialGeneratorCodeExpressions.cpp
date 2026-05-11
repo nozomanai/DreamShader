@@ -1077,22 +1077,40 @@ namespace UE::DreamShader::Editor::Private
 
 		const FTextShaderFunctionDefinition* Function = FindFunctionDefinition(CalleeName);
 		const FTextShaderFunctionDefinition* GraphFunction = FindGraphFunctionDefinition(CalleeName);
-		if (!Function && !GraphFunction)
+		const FTextShaderMaterialFunctionDefinition* MaterialFunctionDefinition = FindMaterialFunctionDefinition(CalleeName);
+		const FTextShaderVirtualFunctionDefinition* VirtualFunction = FindVirtualFunctionDefinition(CalleeName);
+		int32 MatchCount = 0;
+		MatchCount += Function ? 1 : 0;
+		MatchCount += GraphFunction ? 1 : 0;
+		MatchCount += MaterialFunctionDefinition ? 1 : 0;
+		MatchCount += VirtualFunction ? 1 : 0;
+		if (MatchCount == 0)
 		{
 			OutError = FString::Printf(
-				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function or GraphFunction calls may use statement syntax."),
+				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function, GraphFunction, ShaderFunction, or VirtualFunction calls may use statement syntax."),
 				*CalleeName);
 			return false;
 		}
-		if (Function && GraphFunction)
+		if (MatchCount > 1)
 		{
-			OutError = FString::Printf(TEXT("Graph expression statement '%s' is ambiguous because both Function and GraphFunction definitions exist."), *CalleeName);
+			OutError = FString::Printf(TEXT("Graph expression statement '%s' is ambiguous because multiple callable definitions exist."), *CalleeName);
 			return false;
 		}
 
-		return Function
-			? ExecuteCustomFunctionCall(*Function, Expression->Arguments, OutError)
-			: ExecuteGraphFunctionCall(*GraphFunction, Expression->Arguments, OutError);
+		if (Function)
+		{
+			return ExecuteCustomFunctionCall(*Function, Expression->Arguments, OutError);
+		}
+		if (GraphFunction)
+		{
+			return ExecuteGraphFunctionCall(*GraphFunction, Expression->Arguments, OutError);
+		}
+		if (MaterialFunctionDefinition)
+		{
+			return ExecuteMaterialFunctionCall(*MaterialFunctionDefinition, Expression->Arguments, OutError);
+		}
+
+		return ExecuteVirtualFunctionCall(*VirtualFunction, Expression->Arguments, OutError);
 	}
 
 	bool FCodeGraphBuilder::EvaluateExpression(const TSharedPtr<FCodeExpression>& Expression, FCodeValue& OutValue, FString& OutError)

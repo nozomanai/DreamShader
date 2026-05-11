@@ -13,6 +13,7 @@
 class UMaterial;
 class UMaterialFunction;
 class UMaterialExpression;
+class UMaterialExpressionMaterialFunctionCall;
 class UClass;
 class FProperty;
 
@@ -324,10 +325,35 @@ namespace UE::DreamShader::Editor::Private
 			const TArray<FCodeCallArgument>& Arguments,
 			FCodeValue& OutValue,
 			FString& OutError);
+		bool ExecuteMaterialFunctionCall(
+			const FTextShaderMaterialFunctionDefinition& Function,
+			const TArray<FCodeCallArgument>& Arguments,
+			FString& OutError);
 		bool EvaluateVirtualFunctionCall(
 			const FTextShaderVirtualFunctionDefinition& Function,
 			const TArray<FCodeCallArgument>& Arguments,
 			FCodeValue& OutValue,
+			FString& OutError);
+		bool ExecuteVirtualFunctionCall(
+			const FTextShaderVirtualFunctionDefinition& Function,
+			const TArray<FCodeCallArgument>& Arguments,
+			FString& OutError);
+		bool ExecuteMaterialFunctionCallAsset(
+			const FString& CallKind,
+			const FString& FunctionName,
+			const FString& ObjectPath,
+			const TArray<FTextShaderFunctionParameter>& Inputs,
+			const TArray<FTextShaderFunctionParameter>& Outputs,
+			const TArray<FCodeCallArgument>& Arguments,
+			FString& OutError);
+		bool CreateAndConnectMaterialFunctionCallAsset(
+			const FString& CallKind,
+			const FString& FunctionName,
+			const FString& ObjectPath,
+			const TArray<FTextShaderFunctionParameter>& Inputs,
+			const TArray<FTextShaderFunctionParameter>& Outputs,
+			const TArray<FCodeCallArgument>& InputArguments,
+			UMaterialExpressionMaterialFunctionCall*& OutFunctionCall,
 			FString& OutError);
 		bool EvaluateMaterialFunctionCallAsset(
 			const FString& CallKind,

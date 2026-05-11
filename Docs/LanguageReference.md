@@ -1,11 +1,11 @@
 # DreamShaderLang 语法参考
 
-DreamShaderLang 是 DreamShader 插件使用的文本语言。它用 `.dsm` / `.dsh` 源文件描述 Unreal 材质、材质函数和共享 helper，并由插件生成标准 Unreal 资产。
+DreamShaderLang 是 DreamShader 插件使用的文本语言。它用 `.dsm` / `.dsf` / `.dsh` 源文件描述 Unreal 材质、材质函数和共享 helper，并由插件生成标准 Unreal 资产。
 
 | 项目 | 内容 |
 | --- | --- |
-| 插件版本 | `1.3.4` |
-| 源文件 | `.dsm` / `.dsh` |
+| 插件版本 | `1.3.5` |
+| 源文件 | `.dsm` / `.dsf` / `.dsh` |
 | 主要产物 | `UMaterial` / `UMaterialFunction` |
 | 开发者 | TypeDreamMoon |
 
@@ -21,10 +21,24 @@ Dream Shader Material。用于生成资产，通常包含：
 - `ShaderLayerBlend(Name="...")`
 - `VirtualFunction(Name="...")`
 - `import "Shared/Common.dsh";`
+- `import "Functions/F_PulseTint.dsf";`
 
-一个 `.dsm` 可以包含共享 `Function` / `Namespace`，但推荐把可复用逻辑放入 `.dsh`，让材质文件更聚焦。
+一个 `.dsm` 可以包含共享 `Function` / `Namespace` 和 `ShaderFunction`，但推荐把可复用 helper 放入 `.dsh`，把可复用生成函数放入 `.dsf`，让材质文件更聚焦。
 
-### 1.2 `.dsh`
+### 1.2 `.dsf`
+
+Dream Shader Function。用于生成可复用 Unreal `UMaterialFunction` 资产，通常包含：
+
+- `import "Shared/Common.dsh";`
+- `import "OtherFunction.dsf";`
+- `ShaderFunction(Name="...")`
+- `Function Name(...) { ... }`
+- `GraphFunction Name(...) { ... }`
+- `VirtualFunction(Name="...")`
+
+`.dsf` 可以被 `.dsm` 或其他 `.dsf` 导入。导入后，文件中的 `ShaderFunction` 会先生成资产，再作为当前 Graph 可调用的函数签名参与生成。`.dsf` 不允许声明顶层 `Shader(...)`。
+
+### 1.3 `.dsh`
 
 Dream Shader Header。用于存放共享代码，通常包含：
 
@@ -421,10 +435,20 @@ Options = {
 - `UE.StaticSwitchParameter(...)` 或 `StaticSwitchParameter` 属性调用。
 - `Function(...)` / `Namespace::Function(...)` 独立调用。
 - `GraphFunction(...)` / `Namespace::GraphFunction(...)` Custom 节点调用。
-- `ShaderFunction(...)` / `VirtualFunction(...)` 值调用。
+- `ShaderFunction(...)` / `VirtualFunction(...)` 值调用和多输出独立调用。
 - `MaterialAttributes` 聚合值，以及 `Attrs.BaseColor = ...` / `Attrs.Roughness = ...` 形式的成员写入。
 - 基础 `if` / `else` 图分支。
 - 将结果绑定到输出变量。
+
+`ShaderFunction` / `VirtualFunction` 多输出独立调用使用“输入参数在前，输出目标变量在后”的顺序：
+
+```c
+Graph = {
+    F_PulseTint(BaseColor, Tint, Strength, TimeScale, Color, Pulse, Alpha);
+}
+```
+
+上例中 `BaseColor`、`Tint`、`Strength`、`TimeScale` 对应函数 `Inputs`，`Color`、`Pulse`、`Alpha` 对应函数 `Outputs`。
 
 限制：
 
@@ -434,10 +458,11 @@ Options = {
 
 ## 4. `import`
 
-在 `.dsm` 或 `.dsh` 顶部引入头文件：
+在 `.dsm`、`.dsf` 或 `.dsh` 顶部引入依赖文件：
 
 ```c
 import "Shared/Common.dsh";
+import "Functions/F_PulseTint.dsf";
 import "Builtin/Texture.dsh";
 import "@typedreammoon/dream-noise/Library/Noise.dsh";
 ```
@@ -447,6 +472,7 @@ import "@typedreammoon/dream-noise/Library/Noise.dsh";
 | 路径形式 | 解析位置 |
 | --- | --- |
 | `"Shared/Common.dsh"` | 当前文件目录和项目 `DShader` 根目录。 |
+| `"Functions/F_PulseTint.dsf"` | 当前文件目录和项目 `DShader` 根目录。 |
 | `"Builtin/Texture.dsh"` | 插件内置库目录。 |
 | `"@scope/package/Library/File.dsh"` | 项目 `DShader/Packages`。 |
 
@@ -454,7 +480,8 @@ import "@typedreammoon/dream-noise/Library/Noise.dsh";
 
 - 支持递归导入。
 - 会检测循环导入。
-- `.dsh` 变更后只刷新依赖它的 `.dsm`。
+- 省略扩展名时默认按 `.dsh` 解析；导入 `.dsf` 需要显式写出 `.dsf` 扩展名。
+- `.dsh` / `.dsf` 变更后只刷新依赖它们的 `.dsm` / `.dsf`。
 
 Package 相关说明见 [Packages.md](Packages.md)。
 
@@ -670,8 +697,9 @@ DreamShader 会维护源文件和资产之间的关系：
 
 - `.dsm` 直接生成资产。
 - `.dsh` 不直接生成资产。
-- `.dsh` 保存后只重编依赖它的 `.dsm`。
-- Parser 错误会尽量通过 source map 映射回真实 `.dsm` / `.dsh` 行列。
+- `.dsf` 会生成其中声明的 `ShaderFunction` 资产。
+- `.dsh` / `.dsf` 保存后只重编依赖它们的 `.dsm` / `.dsf`。
+- Parser 错误会尽量通过 source map 映射回真实 `.dsm` / `.dsf` / `.dsh` 行列。
 - 生成资产会写入 `DreamShader.SourceFile`、`DreamShader.SourceHash`、`DreamShader.GeneratedAtUtc`。
 - source hash 未变化时会跳过重复生成。
 

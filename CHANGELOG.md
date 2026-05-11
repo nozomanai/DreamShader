@@ -1,5 +1,17 @@
 # DreamShader ChangeLog
 
+## 1.3.5 - 2026-05-11
+
+### ShaderFunction Calls
+
+- Added statement-style multi-output `ShaderFunction` and `VirtualFunction` calls in `Graph`, using positional inputs followed by output target variables.
+
+### Dream Shader Function Files
+
+- Added `.dsf` Dream Shader Function files for reusable generated `ShaderFunction` assets.
+- Allowed `.dsm` and `.dsf` files to import `.dsf` files so generated functions can be reused across DreamShader sources.
+- Added `.dsf` source discovery, dependency tracking, and VSCode workspace file association.
+
 ## 1.3.4 - 2026-05-11
 
 ### Output Initializers

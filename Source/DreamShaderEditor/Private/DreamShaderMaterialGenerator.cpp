@@ -859,7 +859,7 @@ namespace UE::DreamShader::Editor
 			FString Result = InImportPath;
 			Result.TrimStartAndEndInline();
 			Result.ReplaceInline(TEXT("\\"), TEXT("/"));
-			if (!Result.EndsWith(TEXT(".dsh"), ESearchCase::IgnoreCase))
+			if (FPaths::GetExtension(Result, true).IsEmpty())
 			{
 				Result += TEXT(".dsh");
 			}
@@ -1084,6 +1084,17 @@ namespace UE::DreamShader::Editor
 					|| SanitizedSourceText.Contains(TEXT("MaterialLayerBlend("), ESearchCase::IgnoreCase)))
 			{
 				OutError = FString::Printf(TEXT("DreamShader header '%s' may only declare Function/Namespace/VirtualFunction blocks and imports."), *NormalizedPath);
+				return false;
+			}
+
+			if (UE::DreamShader::IsDreamShaderFunctionFile(NormalizedPath)
+				&& (SanitizedSourceText.Contains(TEXT("Shader("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("ShaderLayer("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("ShaderLayerBlend("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("MaterialLayer("), ESearchCase::IgnoreCase)
+					|| SanitizedSourceText.Contains(TEXT("MaterialLayerBlend("), ESearchCase::IgnoreCase)))
+			{
+				OutError = FString::Printf(TEXT("DreamShader function file '%s' may only declare imports, Function/Namespace/GraphFunction/VirtualFunction blocks, and ShaderFunction blocks."), *NormalizedPath);
 				return false;
 			}
 
@@ -1906,7 +1917,7 @@ namespace UE::DreamShader::Editor
 		const FString SourceFilePath = UE::DreamShader::NormalizeSourceFilePath(InSourceFilePath);
 		if (UE::DreamShader::IsDreamShaderHeaderFile(SourceFilePath))
 		{
-			OutMessage = FString::Printf(TEXT("DreamShader header '%s' does not generate assets directly. Recompile dependent .dsm files instead."), *SourceFilePath);
+			OutMessage = FString::Printf(TEXT("DreamShader header '%s' does not generate assets directly. Recompile dependent .dsm or .dsf files instead."), *SourceFilePath);
 			return false;
 		}
 
@@ -1927,6 +1938,12 @@ namespace UE::DreamShader::Editor
 		}
 
 		const FString SourceHash = Private::BuildSourceHash(SourceText);
+
+		if (UE::DreamShader::IsDreamShaderFunctionFile(SourceFilePath) && !Definition.Name.IsEmpty())
+		{
+			OutMessage = FString::Printf(TEXT("%s: .dsf files cannot define top-level Shader blocks."), *SourceFilePath);
+			return false;
+		}
 
 		bool bGeneratedHelperInclude = false;
 		if (!Definition.Functions.IsEmpty())
@@ -2010,9 +2027,9 @@ namespace UE::DreamShader::Editor
 	bool FMaterialGenerator::GenerateMaterialFromFile(const FString& InSourceFilePath, FString& OutMessage)
 	{
 		const FString SourceFilePath = UE::DreamShader::NormalizeSourceFilePath(InSourceFilePath);
-		if (UE::DreamShader::IsDreamShaderHeaderFile(SourceFilePath))
+		if (UE::DreamShader::IsDreamShaderHeaderFile(SourceFilePath) || UE::DreamShader::IsDreamShaderFunctionFile(SourceFilePath))
 		{
-			OutMessage = FString::Printf(TEXT("DreamShader header '%s' cannot generate a material asset directly."), *SourceFilePath);
+			OutMessage = FString::Printf(TEXT("DreamShader source '%s' cannot generate a material asset directly."), *SourceFilePath);
 			return false;
 		}
 

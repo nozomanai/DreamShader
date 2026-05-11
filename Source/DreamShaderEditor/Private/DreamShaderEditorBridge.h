@@ -42,7 +42,7 @@ namespace UE::DreamShader::Editor::Private
 
 		void QueueFullScan();
 		void QueueSourceFile(const FString& SourceFilePath);
-		void QueueDependentMaterialsForHeader(const FString& HeaderFilePath);
+		void QueueDependentSourcesForImport(const FString& ImportFilePath);
 		void OnDirectoryChanged(const TArray<FFileChangeData>& FileChanges);
 		bool Tick(float DeltaSeconds);
 		void ProcessRequestFiles();

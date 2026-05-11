@@ -2,11 +2,11 @@
 
 [中文文档](README.zh-CN.md) | [Language Reference](Docs/LanguageReference.md) | [Examples](Docs/Examples.md) | [Packages](Docs/Packages.md) | [VSCode](Docs/VSCode.md)
 
-DreamShader is an Unreal Engine plugin for authoring materials and material functions with text source files. It introduces `DreamShaderLang`, a compact DSL that turns `.dsm` and `.dsh` files into Unreal `UMaterial`, `UMaterialFunction`, Material Layer, and Material Layer Blend assets.
+DreamShader is an Unreal Engine plugin for authoring materials and material functions with text source files. It introduces `DreamShaderLang`, a compact DSL that turns `.dsm`, `.dsf`, and `.dsh` files into Unreal `UMaterial`, `UMaterialFunction`, Material Layer, and Material Layer Blend assets.
 
-> Current version: `1.3.4`.
+> Current version: `1.3.5`.
 >
-> DreamShader is actively developed. The core authoring workflow is usable, but you should keep all `.dsm` / `.dsh` files in source control.
+> DreamShader is actively developed. The core authoring workflow is usable, but you should keep all `.dsm` / `.dsf` / `.dsh` files in source control.
 >
 > The plugin is currently developed against Unreal Engine `5.7`. Other engine versions have not been fully tested.
 
@@ -23,7 +23,7 @@ For bug reports and feature requests, open an [issue](https://github.com/TypeDre
 - Write reusable HLSL-style helpers with `Function`, `GraphFunction`, and `Namespace`.
 - Use `MaterialAttributes` values, including `Attrs.BaseColor = ...` style member writes.
 - Use typed `Properties` for parameters, constants, texture objects, static switches, Material Parameter Collections, and reflected Unreal expression properties.
-- Import shared `.dsh` headers and install reusable DreamShader packages under `DShader/Packages`.
+- Import shared `.dsh` headers, reusable `.dsf` function files, and DreamShader packages under `DShader/Packages`.
 - Work with a VSCode extension that provides syntax highlighting, completion, hover, signature help, diagnostics, package commands, and Unreal bridge diagnostics.
 
 ## Source Model
@@ -31,6 +31,7 @@ For bug reports and feature requests, open an [issue](https://github.com/TypeDre
 | Item | Purpose |
 | --- | --- |
 | `.dsm` | Material implementation file. Usually contains `Shader`, `ShaderFunction`, `ShaderLayer`, `ShaderLayerBlend`, or `VirtualFunction` blocks. |
+| `.dsf` | Dream Shader Function file. Generates reusable `ShaderFunction` assets that can be imported by `.dsm` files. |
 | `.dsh` | Shared header file. Usually contains `import`, `Function`, `GraphFunction`, `Namespace`, and `VirtualFunction` declarations. |
 | `Shader` | Generates an Unreal `UMaterial`. |
 | `ShaderFunction` | Generates an Unreal `UMaterialFunction`. |
@@ -71,7 +72,7 @@ Project settings are available under `Project Settings > DreamPlugin > Dream Sha
 | --- | --- | --- |
 | `SourceDirectory` | `DShader` | Root directory for DreamShader source files. |
 | `GeneratedShaderDirectory` | `Intermediate/DreamShader/GeneratedShaders` | Output directory for generated `.ush` helper files. |
-| `AutoCompileOnSave` | `true` | Rebuild affected assets when `.dsm` / `.dsh` files are saved. |
+| `AutoCompileOnSave` | `true` | Rebuild affected assets when `.dsm` / `.dsf` / `.dsh` files are saved. |
 | `SaveDebounceSeconds` | `0.25` | File-save debounce time. |
 | `VerboseLogs` | `false` | Print more detailed logs. |
 | `OpenInNewWindow` | `true` | Open the generated VSCode workspace in a new window by default. |
@@ -303,8 +304,8 @@ The extension releases are available from [dreamshader-language-support](https:/
 The repository includes a GitHub Actions release workflow. Push a tag that matches `VersionName` in `DreamShader.uplugin`:
 
 ```powershell
-git tag v1.3.4
-git push origin v1.3.4
+git tag v1.3.5
+git push origin v1.3.5
 ```
 
 The release archive is named `DreamShader-<Version>.zip` and contains the plugin source, resources, built-in libraries, documentation, README, CHANGELOG, and LICENSE. It excludes `Binaries` and `Intermediate`. The release workflow also attaches the latest VSCode extension assets from `TypeDreamMoon/dreamshader-language-support`.
@@ -313,7 +314,7 @@ The release archive is named `DreamShader-<Version>.zip` and contains the plugin
 
 | Item | Value |
 | --- | --- |
-| Version | `1.3.4` |
+| Version | `1.3.5` |
 | Language | `DreamShaderLang` |
 | Author | TypeDreamMoon |
 | GitHub | <https://github.com/TypeDreamMoon> |
