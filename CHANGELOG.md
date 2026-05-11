@@ -1,5 +1,12 @@
 # DreamShader ChangeLog
 
+## 1.3.4 - 2026-05-11
+
+### Output Initializers
+
+- Added support for initialized output declarations such as `vec3 Color = Tint;` inside `Outputs`.
+- Allowed `Shader` blocks to use initialized output declarations with an empty `Graph = {}` block.
+
 ## 1.3.3 - 2026-05-11
 
 ### Graph Swizzles

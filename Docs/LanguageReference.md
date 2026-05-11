@@ -4,7 +4,7 @@ DreamShaderLang 是 DreamShader 插件使用的文本语言。它用 `.dsm` / `.
 
 | 项目 | 内容 |
 | --- | --- |
-| 插件版本 | `1.3.3` |
+| 插件版本 | `1.3.4` |
 | 源文件 | `.dsm` / `.dsh` |
 | 主要产物 | `UMaterial` / `UMaterialFunction` |
 | 开发者 | TypeDreamMoon |
@@ -339,6 +339,18 @@ Outputs = {
 
     Base.EmissiveColor = Color;
     Base.Opacity = OpacityValue;
+}
+```
+
+输出变量可以直接声明初始化值；这种写法即使 `Graph = {}` 为空也会生成对应材质图：
+
+```c
+Outputs = {
+    vec3 Color = Tint;
+    Base.EmissiveColor = Color;
+}
+
+Graph = {
 }
 ```
 

@@ -116,6 +116,12 @@ namespace UE::DreamShader::Editor::Private
 
 	bool ParseCodeExpression(const FString& InExpression, TSharedPtr<FCodeExpression>& OutExpression, FString& OutError);
 	bool ParseCodeStatements(const FString& InCode, TArray<FCodeStatement>& OutStatements, FString& OutError);
+	bool MakeCodeDeclarationStatement(
+		const FString& DeclaredType,
+		const FString& TargetName,
+		const FString& InitializerText,
+		FCodeStatement& OutStatement,
+		FString& OutError);
 
 	bool ResolveMaterialProperty(const FString& InName, FResolvedMaterialProperty& OutProperty);
 	bool TryResolveCustomOutputType(const FString& InTypeName, ECustomMaterialOutputType& OutOutputType);

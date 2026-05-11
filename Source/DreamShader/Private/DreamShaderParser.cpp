@@ -748,7 +748,17 @@ namespace UE::DreamShader
 			return false;
 		}
 
-		if (bFoundShader && OutDefinition.Code.IsEmpty())
+		bool bHasInitializedOutput = false;
+		for (const FTextShaderVariableDeclaration& OutputDeclaration : OutDefinition.OutputDeclarations)
+		{
+			if (OutputDeclaration.bHasDefaultValue)
+			{
+				bHasInitializedOutput = true;
+				break;
+			}
+		}
+
+		if (bFoundShader && OutDefinition.Code.IsEmpty() && !bHasInitializedOutput)
 		{
 			OutError = TEXT("Shader must provide a Graph block.");
 			return false;

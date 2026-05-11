@@ -614,6 +614,41 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
+	bool MakeCodeDeclarationStatement(
+		const FString& DeclaredType,
+		const FString& TargetName,
+		const FString& InitializerText,
+		FCodeStatement& OutStatement,
+		FString& OutError)
+	{
+		OutStatement = FCodeStatement{};
+		OutStatement.bIsDeclaration = true;
+		OutStatement.DeclaredType = DeclaredType.TrimStartAndEnd();
+		OutStatement.TargetName = TargetName.TrimStartAndEnd();
+
+		if (OutStatement.DeclaredType.IsEmpty() || OutStatement.TargetName.IsEmpty())
+		{
+			OutError = TEXT("Output declaration initializer requires a type and name.");
+			return false;
+		}
+
+		const FString TrimmedInitializer = InitializerText.TrimStartAndEnd();
+		if (TrimmedInitializer.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Output declaration '%s' has an empty initializer."), *OutStatement.TargetName);
+			return false;
+		}
+
+		OutStatement.InitializerText = TrimmedInitializer;
+		if (IsBraceInitializerText(TrimmedInitializer))
+		{
+			OutStatement.bUsesBraceInitializer = true;
+			return true;
+		}
+
+		return ParseCodeExpression(TrimmedInitializer, OutStatement.Expression, OutError);
+	}
+
 	class FCodeExpressionParser
 	{
 	public:
@@ -1242,30 +1277,16 @@ namespace UE::DreamShader::Editor::Private
 			const auto ParseDeclarationStatement =
 				[&OutError](const FString& DeclaredType, const FString& TargetName, const FString* InitializerText, FCodeStatement& OutStatement) -> bool
 			{
-				OutStatement = FCodeStatement{};
-				OutStatement.bIsDeclaration = true;
-				OutStatement.DeclaredType = DeclaredType;
-				OutStatement.TargetName = TargetName;
-
 				if (!InitializerText)
 				{
+					OutStatement = FCodeStatement{};
+					OutStatement.bIsDeclaration = true;
+					OutStatement.DeclaredType = DeclaredType;
+					OutStatement.TargetName = TargetName;
 					return true;
 				}
 
-				OutStatement.InitializerText = *InitializerText;
-				if (IsBraceInitializerText(*InitializerText))
-				{
-					OutStatement.bUsesBraceInitializer = true;
-					return true;
-				}
-
-				FCodeExpressionParser ExpressionParser(*InitializerText);
-				if (!ExpressionParser.Parse(OutStatement.Expression, OutError))
-				{
-					return false;
-				}
-
-				return true;
+				return MakeCodeDeclarationStatement(DeclaredType, TargetName, *InitializerText, OutStatement, OutError);
 			};
 
 			const TArray<FString> Declarators = SplitTopLevelSegments(StatementText, TCHAR(','));

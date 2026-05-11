@@ -1425,6 +1425,36 @@ namespace UE::DreamShader::Editor
 			OutputExpression->ConditionallyGenerateId(false);
 		}
 
+		bool AppendInitializedOutputStatements(
+			const TArray<FTextShaderVariableDeclaration>& OutputDeclarations,
+			TArray<Private::FCodeStatement>& InOutStatements,
+			FString& OutError)
+		{
+			for (const FTextShaderVariableDeclaration& OutputDeclaration : OutputDeclarations)
+			{
+				if (!OutputDeclaration.bHasDefaultValue)
+				{
+					continue;
+				}
+
+				Private::FCodeStatement Statement;
+				if (!Private::MakeCodeDeclarationStatement(
+					OutputDeclaration.Type,
+					OutputDeclaration.Name,
+					OutputDeclaration.DefaultValueText,
+					Statement,
+					OutError))
+				{
+					OutError = FString::Printf(TEXT("Output '%s': %s"), *OutputDeclaration.Name, *OutError);
+					return false;
+				}
+
+				InOutStatements.Add(Statement);
+			}
+
+			return true;
+		}
+
 		bool GenerateMaterialFunctionAsset(
 			const FString& SourceFilePath,
 			const FString& SourceHash,
@@ -2094,7 +2124,7 @@ namespace UE::DreamShader::Editor
 		int32 MaterialAttributesSeedPositionY = OutputTargetPositionY;
 		for (const FTextShaderVariableDeclaration& OutputDeclaration : Definition.OutputDeclarations)
 		{
-			if (Private::IsMaterialAttributesType(OutputDeclaration.Type))
+			if (!OutputDeclaration.bHasDefaultValue && Private::IsMaterialAttributesType(OutputDeclaration.Type))
 			{
 				FString SeedError;
 				if (!SeedMaterialAttributesGraphValue(
@@ -2112,7 +2142,17 @@ namespace UE::DreamShader::Editor
 		}
 		OutputTargetPositionY = FMath::Max(OutputTargetPositionY, MaterialAttributesSeedPositionY);
 
-		if (!Definition.Code.IsEmpty())
+		bool bHasInitializedOutput = false;
+		for (const FTextShaderVariableDeclaration& OutputDeclaration : Definition.OutputDeclarations)
+		{
+			if (OutputDeclaration.bHasDefaultValue)
+			{
+				bHasInitializedOutput = true;
+				break;
+			}
+		}
+
+		if (!Definition.Code.IsEmpty() || bHasInitializedOutput)
 		{
 			if (bUsesReturn)
 			{
@@ -2122,11 +2162,19 @@ namespace UE::DreamShader::Editor
 
 			TArray<Private::FCodeStatement> CodeStatements;
 			FString CodeParseError;
-			if (!Private::ParseCodeStatements(Definition.Code, CodeStatements, CodeParseError))
+			if (!AppendInitializedOutputStatements(Definition.OutputDeclarations, CodeStatements, CodeParseError))
 			{
 				OutMessage = FString::Printf(TEXT("%s: %s"), *SourceFilePath, *CodeParseError);
 				return false;
 			}
+
+			TArray<Private::FCodeStatement> GraphStatements;
+			if (!Definition.Code.IsEmpty() && !Private::ParseCodeStatements(Definition.Code, GraphStatements, CodeParseError))
+			{
+				OutMessage = FString::Printf(TEXT("%s: %s"), *SourceFilePath, *CodeParseError);
+				return false;
+			}
+			CodeStatements.Append(GraphStatements);
 
 			Private::FCodeGraphBuilder CodeGraphBuilder(
 				Material,
