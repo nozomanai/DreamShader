@@ -48,6 +48,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Misc/PackageName.h"
+#include "Misc/ScopedSlowTask.h"
 #include "ObjectTools.h"
 #include "UObject/MetaData.h"
 #include "UObject/Package.h"
@@ -2724,6 +2725,10 @@ namespace UE::DreamShader::Editor::Private
 			return;
 		}
 
+		FScopedSlowTask ClearSlowTask(
+			FMath::Max(1.0f, static_cast<float>(Material->GetExpressions().Num())),
+			FText::FromString(FString::Printf(TEXT("Clearing Material graph '%s'..."), *Material->GetName())));
+
 		for (int32 MaterialPropertyIndex = 0; MaterialPropertyIndex < MP_MAX; ++MaterialPropertyIndex)
 		{
 			if (FExpressionInput* ExpressionInput = Material->GetExpressionInputForProperty(static_cast<EMaterialProperty>(MaterialPropertyIndex)))
@@ -2752,6 +2757,9 @@ namespace UE::DreamShader::Editor::Private
 
 			for (UMaterialExpression* Expression : ExpressionSnapshot)
 			{
+				ClearSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(
+					TEXT("Deleting old Material node '%s'..."),
+					Expression ? *Expression->GetName() : TEXT("<null>"))));
 				EnsureExpressionCanBeDeleted(Expression);
 				UMaterialEditingLibrary::DeleteMaterialExpression(Material, Expression);
 			}
@@ -2766,6 +2774,10 @@ namespace UE::DreamShader::Editor::Private
 		{
 			return;
 		}
+
+		FScopedSlowTask ClearSlowTask(
+			FMath::Max(1.0f, static_cast<float>(MaterialFunction->GetExpressions().Num())),
+			FText::FromString(FString::Printf(TEXT("Clearing Material Function graph '%s'..."), *MaterialFunction->GetName())));
 
 		int32 SafetyCounter = 0;
 		while (!MaterialFunction->GetExpressions().IsEmpty() && SafetyCounter < 64)
@@ -2787,6 +2799,9 @@ namespace UE::DreamShader::Editor::Private
 
 			for (UMaterialExpression* Expression : ExpressionSnapshot)
 			{
+				ClearSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(
+					TEXT("Deleting old Material Function node '%s'..."),
+					Expression ? *Expression->GetName() : TEXT("<null>"))));
 				EnsureExpressionCanBeDeleted(Expression);
 				UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(MaterialFunction, Expression);
 			}
@@ -2873,6 +2888,10 @@ namespace UE::DreamShader::Editor::Private
 		{
 			return;
 		}
+
+		FScopedSlowTask LayoutSlowTask(
+			FMath::Max(1.0f, static_cast<float>(Expressions.Num())),
+			FText::FromString(TEXT("Laying out DreamShader material graph...")));
 
 		TSet<UMaterialExpression*> ExpressionSet;
 		TMap<UMaterialExpression*, int32> OriginalOrder;
@@ -3050,6 +3069,7 @@ namespace UE::DreamShader::Editor::Private
 		constexpr int32 OutputX = 900;
 		constexpr int32 ColumnSpacing = 380;
 		constexpr int32 RowSpacing = 190;
+		int32 PositionedCount = 0;
 		for (int32 Rank = 0; Rank <= MaxRank; ++Rank)
 		{
 			TArray<UMaterialExpression*>* Layer = Layers.Find(Rank);
@@ -3062,6 +3082,10 @@ namespace UE::DreamShader::Editor::Private
 			const int32 StartY = -((Layer->Num() - 1) * RowSpacing) / 2;
 			for (int32 Index = 0; Index < Layer->Num(); ++Index)
 			{
+				LayoutSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(
+					TEXT("Positioning node %d of %d..."),
+					++PositionedCount,
+					Expressions.Num())));
 				SetGeneratedExpressionPosition((*Layer)[Index], PositionX, StartY + Index * RowSpacing);
 			}
 		}

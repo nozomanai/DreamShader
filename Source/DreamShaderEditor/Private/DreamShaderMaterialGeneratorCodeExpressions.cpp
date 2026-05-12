@@ -1,5 +1,8 @@
 #include "DreamShaderMaterialGeneratorCodeShared.h"
 
+#include "Misc/ScopeExit.h"
+#include "Misc/ScopedSlowTask.h"
+
 namespace UE::DreamShader::Editor::Private
 {
 	FCodeGraphBuilder::FCodeGraphBuilder(
@@ -25,8 +28,23 @@ namespace UE::DreamShader::Editor::Private
 	{
 		Values = &InOutValues;
 
+		FScopedSlowTask BuildSlowTask(
+			FMath::Max(1, Statements.Num()),
+			FText::FromString(FString::Printf(TEXT("Building DreamShader graph nodes (%d statement%s)..."),
+				Statements.Num(),
+				Statements.Num() == 1 ? TEXT("") : TEXT("s"))));
+		ActiveBuildSlowTask = &BuildSlowTask;
+		ON_SCOPE_EXIT
+		{
+			ActiveBuildSlowTask = nullptr;
+		};
+
 		for (const FCodeStatement& Statement : Statements)
 		{
+			BuildSlowTask.EnterProgressFrame(1.0f, FText::FromString(
+				Statement.TargetName.IsEmpty()
+					? TEXT("Evaluating DreamShader graph statement...")
+					: FString::Printf(TEXT("Evaluating DreamShader graph statement '%s'..."), *Statement.TargetName)));
 			if (!ExecuteStatement(Statement, OutError))
 			{
 				return false;
@@ -464,6 +482,11 @@ namespace UE::DreamShader::Editor::Private
 		const int32 PositionX,
 		const int32 PositionY) const
 	{
+		if (ActiveBuildSlowTask && (++ProgressTickCounter % 8) == 0)
+		{
+			ActiveBuildSlowTask->TickProgress();
+		}
+
 		return UMaterialEditingLibrary::CreateMaterialExpressionEx(
 			Material,
 			MaterialFunction,

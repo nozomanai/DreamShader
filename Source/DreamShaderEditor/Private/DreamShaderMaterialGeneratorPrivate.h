@@ -16,6 +16,7 @@ class UMaterialExpression;
 class UMaterialExpressionMaterialFunctionCall;
 class UClass;
 class FProperty;
+struct FScopedSlowTask;
 
 namespace UE::DreamShader::Editor::Private
 {
@@ -231,6 +232,8 @@ namespace UE::DreamShader::Editor::Private
 		TSet<FString> CreatingPropertyNames;
 		int32 NextPropertyNodeY = -620;
 		int32 NextNodeY = -120;
+		FScopedSlowTask* ActiveBuildSlowTask = nullptr;
+		mutable int32 ProgressTickCounter = 0;
 
 		FCodeValue* FindValue(const FString& Name) const;
 		bool TryCreatePropertyValue(const FString& Name, FCodeValue& OutValue, FString& OutError);

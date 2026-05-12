@@ -15,6 +15,14 @@ namespace UE::DreamShader::Editor::Private
 				return false;
 			}
 
+			// MaterialFunctionCall::GetOutputValueType can report scalar for function outputs
+			// even when the referenced FunctionOutput is a vector. Keep the source declaration
+			// authoritative so vector outputs are not expanded through invalid AppendVector nodes.
+			if (InOutComponentCount > 0 || bInOutIsTextureObject || IsMaterialAttributesComponentType(InOutComponentCount, bInOutIsTextureObject))
+			{
+				return true;
+			}
+
 			int32 ResolvedComponentCount = 0;
 			bool bResolvedIsTextureObject = false;
 			if (TryResolveMaterialValueType(

@@ -806,16 +806,57 @@ namespace UE::DreamShader::Editor::Private
 
 		if (UMaterialExpressionStaticSwitchParameter* StaticSwitchExpression = Cast<UMaterialExpressionStaticSwitchParameter>(Expression))
 		{
-			if (Material && !StaticSwitchExpression->ParameterName.IsNone())
+			if (!StaticSwitchExpression->ParameterName.IsNone())
 			{
 				if (!StaticSwitchExpression->ExpressionGUID.IsValid())
 				{
 					StaticSwitchExpression->ExpressionGUID = FGuid::NewGuid();
 				}
-				Material->SetStaticSwitchParameterValueEditorOnly(
-					StaticSwitchExpression->ParameterName,
-					StaticSwitchExpression->DefaultValue != 0,
-					StaticSwitchExpression->ExpressionGUID);
+				if (Material)
+				{
+					Material->SetStaticSwitchParameterValueEditorOnly(
+						StaticSwitchExpression->ParameterName,
+						StaticSwitchExpression->DefaultValue != 0,
+						StaticSwitchExpression->ExpressionGUID);
+				}
+				else if (MaterialFunction)
+				{
+					MaterialFunction->SetStaticSwitchParameterValueEditorOnly(
+						StaticSwitchExpression->ParameterName,
+						StaticSwitchExpression->DefaultValue != 0,
+						StaticSwitchExpression->ExpressionGUID);
+				}
+			}
+		}
+
+		if (UMaterialExpressionStaticComponentMaskParameter* StaticComponentMaskExpression = Cast<UMaterialExpressionStaticComponentMaskParameter>(Expression))
+		{
+			if (!StaticComponentMaskExpression->ParameterName.IsNone())
+			{
+				if (!StaticComponentMaskExpression->ExpressionGUID.IsValid())
+				{
+					StaticComponentMaskExpression->ExpressionGUID = FGuid::NewGuid();
+				}
+				if (Material)
+				{
+					Material->SetStaticComponentMaskParameterValueEditorOnly(
+						StaticComponentMaskExpression->ParameterName,
+						StaticComponentMaskExpression->DefaultR != 0,
+						StaticComponentMaskExpression->DefaultG != 0,
+						StaticComponentMaskExpression->DefaultB != 0,
+						StaticComponentMaskExpression->DefaultA != 0,
+						StaticComponentMaskExpression->ExpressionGUID);
+				}
+				else if (MaterialFunction)
+				{
+					MaterialFunction->SetStaticComponentMaskParameterValueEditorOnly(
+						StaticComponentMaskExpression->ParameterName,
+						StaticComponentMaskExpression->DefaultR != 0,
+						StaticComponentMaskExpression->DefaultG != 0,
+						StaticComponentMaskExpression->DefaultB != 0,
+						StaticComponentMaskExpression->DefaultA != 0,
+						StaticComponentMaskExpression->ExpressionGUID);
+				}
 			}
 		}
 
@@ -886,6 +927,31 @@ namespace UE::DreamShader::Editor::Private
 		else if (Expression->IsA<UMaterialExpressionStaticSwitchParameter>())
 		{
 			ApplyMaxNumericInputComponentCount(FindBoundInputValue(TEXT("True")), FindBoundInputValue(TEXT("False")));
+		}
+		else if (UMaterialExpressionStaticComponentMaskParameter* StaticComponentMaskExpression = Cast<UMaterialExpressionStaticComponentMaskParameter>(Expression))
+		{
+			const int32 MaskComponentCount =
+				(StaticComponentMaskExpression->DefaultR ? 1 : 0)
+				+ (StaticComponentMaskExpression->DefaultG ? 1 : 0)
+				+ (StaticComponentMaskExpression->DefaultB ? 1 : 0)
+				+ (StaticComponentMaskExpression->DefaultA ? 1 : 0);
+			OutputComponents = MaskComponentCount > 0 ? MaskComponentCount : 1;
+			bIsTextureObject = false;
+		}
+		else if (Expression->IsA<UMaterialExpressionCurveAtlasRowParameter>())
+		{
+			int32 MaskComponentCount = 0;
+			if (Expression->Outputs.IsValidIndex(ResolvedOutputIndex))
+			{
+				const FExpressionOutput& Output = Expression->Outputs[ResolvedOutputIndex];
+				MaskComponentCount =
+					(Output.MaskR ? 1 : 0)
+					+ (Output.MaskG ? 1 : 0)
+					+ (Output.MaskB ? 1 : 0)
+					+ (Output.MaskA ? 1 : 0);
+			}
+			OutputComponents = MaskComponentCount > 0 ? MaskComponentCount : 1;
+			bIsTextureObject = false;
 		}
 		else
 		{

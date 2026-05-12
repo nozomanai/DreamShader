@@ -10,6 +10,8 @@
 #include "Async/Async.h"
 #include "CoreGlobals.h"
 #include "ContentBrowserMenuContexts.h"
+#include "Curves/CurveLinearColor.h"
+#include "Curves/CurveLinearColorAtlas.h"
 #include "DirectoryWatcherModule.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -35,6 +37,7 @@
 #include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/MaterialExpressionConstant4Vector.h"
 #include "Materials/MaterialExpressionCosine.h"
+#include "Materials/MaterialExpressionCurveAtlasRowParameter.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionDesaturation.h"
 #include "Materials/MaterialExpressionDivide.h"
@@ -59,6 +62,7 @@
 #include "Materials/MaterialExpressionScreenPosition.h"
 #include "Materials/MaterialExpressionSine.h"
 #include "Materials/MaterialExpressionSquareRoot.h"
+#include "Materials/MaterialExpressionStaticComponentMaskParameter.h"
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionSubtract.h"
 #include "Materials/MaterialExpressionSaturate.h"
@@ -80,7 +84,10 @@
 #include "Engine/Texture.h"
 #include "Misc/Crc.h"
 #include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
+#include "Misc/ScopedSlowTask.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -92,6 +99,8 @@
 #include "UObject/UObjectIterator.h"
 #include "UObject/Package.h"
 #include "Widgets/Notifications/SNotificationList.h"
+
+#include "DreamShaderCommandlet.h"
 
 #define LOCTEXT_NAMESPACE "DreamShaderEditorBridge"
 
@@ -1047,6 +1056,15 @@ namespace UE::DreamShader::Editor::Private
 			{
 				return Finish(FMath::Max(ResolveInputComponentCount(StaticSwitch->A, 1), ResolveInputComponentCount(StaticSwitch->B, 1)));
 			}
+			if (UMaterialExpressionStaticComponentMaskParameter* StaticComponentMask = Cast<UMaterialExpressionStaticComponentMaskParameter>(Expression))
+			{
+				const int32 MaskComponentCount =
+					(StaticComponentMask->DefaultR ? 1 : 0)
+					+ (StaticComponentMask->DefaultG ? 1 : 0)
+					+ (StaticComponentMask->DefaultB ? 1 : 0)
+					+ (StaticComponentMask->DefaultA ? 1 : 0);
+				return Finish(MaskComponentCount > 0 ? MaskComponentCount : 1);
+			}
 			if (UMaterialExpressionOneMinus* OneMinus = Cast<UMaterialExpressionOneMinus>(Expression))
 			{
 				return Finish(ResolveInputComponentCount(OneMinus->Input, 1));
@@ -1274,6 +1292,19 @@ namespace UE::DreamShader::Editor::Private
 			return MakeStableDecompiledSourcePath(MaterialFunction, TEXT("Decompiled/Functions"), TEXT(".dsf"));
 		}
 
+		FString MakeDefaultDecompiledFilePath(const UObject* Asset)
+		{
+			if (const UMaterial* Material = Cast<UMaterial>(Asset))
+			{
+				return MakeDecompiledMaterialFilePath(Material);
+			}
+			if (const UMaterialFunction* MaterialFunction = Cast<UMaterialFunction>(Asset))
+			{
+				return MakeDecompiledFunctionFilePath(MaterialFunction);
+			}
+			return FString();
+		}
+
 		FString MakeDecompiledAssetName(const UObject* Asset, const TCHAR* Category)
 		{
 			FString PackageName = Asset && Asset->GetOutermost() ? Asset->GetOutermost()->GetName() : FString();
@@ -1462,6 +1493,20 @@ namespace UE::DreamShader::Editor::Private
 					return false;
 				}
 
+				FScopedSlowTask DecompileSlowTask(
+					FMath::Max(4.0f, static_cast<float>(Material->GetExpressions().Num()) + 4.0f),
+					FText::FromString(FString::Printf(TEXT("Decompiling Material '%s'..."), *Material->GetName())));
+				if (!IsRunningCommandlet())
+				{
+					DecompileSlowTask.MakeDialogDelayed(0.25f);
+				}
+				ActiveDecompileSlowTask = &DecompileSlowTask;
+				ON_SCOPE_EXIT
+				{
+					ActiveDecompileSlowTask = nullptr;
+				};
+
+				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Scanning material outputs for '%s'..."), *Material->GetName())));
 				TArray<FString> OutputDeclarations;
 				TArray<FString> OutputBindings;
 				TArray<FString> OutputAssignments;
@@ -1511,6 +1556,7 @@ namespace UE::DreamShader::Editor::Private
 				}
 
 				TArray<FString> Lines;
+				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Formatting DSM source for '%s'..."), *Material->GetName())));
 				Lines.Add(FString::Printf(TEXT("// Decompiled from %s"), *Material->GetPathName()));
 				if (!Warnings.IsEmpty())
 				{
@@ -1551,6 +1597,20 @@ namespace UE::DreamShader::Editor::Private
 					return false;
 				}
 
+				FScopedSlowTask DecompileSlowTask(
+					FMath::Max(4.0f, static_cast<float>(MaterialFunction->GetExpressions().Num()) + 4.0f),
+					FText::FromString(FString::Printf(TEXT("Decompiling Material Function '%s'..."), *MaterialFunction->GetName())));
+				if (!IsRunningCommandlet())
+				{
+					DecompileSlowTask.MakeDialogDelayed(0.25f);
+				}
+				ActiveDecompileSlowTask = &DecompileSlowTask;
+				ON_SCOPE_EXIT
+				{
+					ActiveDecompileSlowTask = nullptr;
+				};
+
+				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Scanning function inputs and outputs for '%s'..."), *MaterialFunction->GetName())));
 				TArray<FFunctionExpressionInput> Inputs;
 				TArray<FFunctionExpressionOutput> Outputs;
 				MaterialFunction->GetInputsAndOutputs(Inputs, Outputs);
@@ -1621,6 +1681,7 @@ namespace UE::DreamShader::Editor::Private
 				}
 
 				TArray<FString> Lines;
+				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Formatting DSF source for '%s'..."), *MaterialFunction->GetName())));
 				Lines.Add(FString::Printf(TEXT("// Decompiled from %s"), *MaterialFunction->GetPathName()));
 				if (!Warnings.IsEmpty())
 				{
@@ -1668,6 +1729,8 @@ namespace UE::DreamShader::Editor::Private
 				VirtualFunctionNames.Reset();
 				Warnings.Reset();
 				NextTempIndex = 0;
+				ActiveDecompileSlowTask = nullptr;
+				ProgressVisitedExpressions.Reset();
 			}
 
 			static void AppendSection(TArray<FString>& Lines, const TCHAR* SectionName, const TArray<FString>& LinesA)
@@ -2259,6 +2322,8 @@ namespace UE::DreamShader::Editor::Private
 					return MakeValue(TEXT("0.0"), TEXT("float"), 1, true);
 				}
 
+				EnterExpressionProgressFrame(Expression);
+
 				const FDecompiledExpressionKey Key{ Expression, OutputIndex };
 				if (const FString* ExistingTemp = ExpressionTemps.Find(Key))
 				{
@@ -2284,6 +2349,65 @@ namespace UE::DreamShader::Editor::Private
 						GetDreamShaderTypeForFunctionInput(FunctionInput->InputType.GetValue()),
 						FunctionInput->InputType == FunctionInput_Scalar ? 1 : GetComponentCountForExpressionOutput(Expression, OutputIndex),
 						true);
+				}
+
+				if (UMaterialExpressionCurveAtlasRowParameter* CurveAtlas = Cast<UMaterialExpressionCurveAtlasRowParameter>(Expression))
+				{
+					TArray<FExpressionCallArgument> Arguments;
+					if (!CurveAtlas->ParameterName.IsNone())
+					{
+						Arguments.Add({
+							TEXT("ParameterName"),
+							FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(CurveAtlas->ParameterName.ToString())),
+							false });
+					}
+					if (!CurveAtlas->Group.IsNone())
+					{
+						Arguments.Add({
+							TEXT("Group"),
+							FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(CurveAtlas->Group.ToString())),
+							false });
+					}
+					if (CurveAtlas->SortPriority != 32)
+					{
+						Arguments.Add({ TEXT("SortPriority"), FString::FromInt(CurveAtlas->SortPriority), false });
+					}
+					if (!CurveAtlas->Desc.IsEmpty())
+					{
+						Arguments.Add({
+							TEXT("Desc"),
+							FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(CurveAtlas->Desc)),
+							false });
+					}
+					Arguments.Add({ TEXT("DefaultValue"), FormatDreamShaderFloat(CurveAtlas->DefaultValue), false });
+					if (CurveAtlas->Curve)
+					{
+						Arguments.Add({ TEXT("Curve"), MakeDreamShaderObjectPathLiteral(CurveAtlas->Curve.Get()), false });
+					}
+					if (CurveAtlas->Atlas)
+					{
+						Arguments.Add({ TEXT("Atlas"), MakeDreamShaderObjectPathLiteral(CurveAtlas->Atlas.Get()), false });
+					}
+					if (CurveAtlas->bUseCustomPrimitiveData)
+					{
+						Arguments.Add({ TEXT("UseCustomPrimitiveData"), TEXT("true"), false });
+						Arguments.Add({ TEXT("PrimitiveDataIndex"), FString::FromInt(CurveAtlas->PrimitiveDataIndex), false });
+					}
+					if (CurveAtlas->InputTime.GetTracedInput().Expression)
+					{
+						Arguments.Add({
+							TEXT("CurveTime"),
+							CompileInputValue(CurveAtlas->InputTime, MakeValue(TEXT("0.0"), TEXT("float"), 1, true)).Text,
+							true });
+					}
+
+					const FString BaseName = CurveAtlas->ParameterName.IsNone()
+						? TEXT("CurveAtlas")
+						: MakeDreamShaderDeclarationName(CurveAtlas->ParameterName.ToString(), TEXT("CurveAtlas"), 0);
+					return CacheTempExpressionValue(
+						Key,
+						MakeExpressionValue(Expression, OutputIndex, BuildUEExpressionCall(Expression, OutputIndex, Arguments), false),
+						BaseName);
 				}
 
 				if (UMaterialExpressionScalarParameter* ScalarParameter = Cast<UMaterialExpressionScalarParameter>(Expression))
@@ -2453,6 +2577,38 @@ namespace UE::DreamShader::Editor::Private
 					}
 					FDecompiledValue Source = CompileInputValue(Mask->Input, MakeValue(TEXT("0.0"), TEXT("float"), 1, true));
 					return MakeSwizzledValue(Source, Suffix);
+				}
+
+				if (UMaterialExpressionStaticComponentMaskParameter* StaticComponentMask = Cast<UMaterialExpressionStaticComponentMaskParameter>(Expression))
+				{
+					TArray<FExpressionCallArgument> Arguments = {
+						{ TEXT("Input"), CompileInput(StaticComponentMask->Input, TEXT("0.0")), true },
+						{ TEXT("DefaultR"), StaticComponentMask->DefaultR ? TEXT("true") : TEXT("false"), false },
+						{ TEXT("DefaultG"), StaticComponentMask->DefaultG ? TEXT("true") : TEXT("false"), false },
+						{ TEXT("DefaultB"), StaticComponentMask->DefaultB ? TEXT("true") : TEXT("false"), false },
+						{ TEXT("DefaultA"), StaticComponentMask->DefaultA ? TEXT("true") : TEXT("false"), false },
+					};
+					if (!StaticComponentMask->ParameterName.IsNone())
+					{
+						Arguments.Add({
+							TEXT("ParameterName"),
+							FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(StaticComponentMask->ParameterName.ToString())),
+							false
+						});
+					}
+
+					const int32 ComponentCount =
+						(StaticComponentMask->DefaultR ? 1 : 0)
+						+ (StaticComponentMask->DefaultG ? 1 : 0)
+						+ (StaticComponentMask->DefaultB ? 1 : 0)
+						+ (StaticComponentMask->DefaultA ? 1 : 0);
+					const FString OutputType = GetDreamShaderTypeForComponentCount(ComponentCount > 0 ? ComponentCount : 1);
+					return MakeExpressionValueWithComponentCount(
+						Expression,
+						OutputIndex,
+						BuildUEExpressionCallWithOutputType(Expression, OutputIndex, OutputType, Arguments),
+						false,
+						ComponentCount > 0 ? ComponentCount : 1);
 				}
 
 				if (UMaterialExpressionAppendVector* Append = Cast<UMaterialExpressionAppendVector>(Expression))
@@ -3066,6 +3222,22 @@ namespace UE::DreamShader::Editor::Private
 			TMap<const UMaterialFunction*, FString> VirtualFunctionNames;
 			TArray<FString> Warnings;
 			int32 NextTempIndex = 0;
+			FScopedSlowTask* ActiveDecompileSlowTask = nullptr;
+			TSet<const UMaterialExpression*> ProgressVisitedExpressions;
+
+			void EnterExpressionProgressFrame(const UMaterialExpression* Expression)
+			{
+				if (!ActiveDecompileSlowTask || !Expression || ProgressVisitedExpressions.Contains(Expression))
+				{
+					return;
+				}
+
+				ProgressVisitedExpressions.Add(Expression);
+				ActiveDecompileSlowTask->EnterProgressFrame(1.0f, FText::FromString(FString::Printf(
+					TEXT("Decompiling node %d: %s"),
+					ProgressVisitedExpressions.Num(),
+					*GetMaterialExpressionShortName(Expression->GetClass()))));
+			}
 		};
 
 		bool IsIdentifierCharacter(TCHAR Character)
@@ -4339,6 +4511,357 @@ namespace UE::DreamShader::Editor::Private
 				}
 			}
 			return InError.TrimStartAndEnd();
+		}
+
+		const TCHAR* GetDreamShaderCommandletUsage()
+		{
+			return TEXT(
+				"DreamShader commandlet usage:\n"
+				"  -run=DreamShader compile -Source=\"C:/Project/DShader/File.dsm\" [-Force]\n"
+				"  -run=DreamShader compile -All [-Force]\n"
+				"  -run=DreamShader decompile -Asset=\"/Game/Path/Asset.Asset\" [-Out=\"C:/Project/DShader/Decompiled/File.dsm\"]\n"
+				"Supported asset types: Material -> .dsm, MaterialFunction -> .dsf.");
+		}
+
+		FString NormalizeCommandletValue(FString Value)
+		{
+			Value.TrimStartAndEndInline();
+			Value = Value.TrimQuotes();
+			Value.TrimStartAndEndInline();
+			return Value;
+		}
+
+		FString NormalizeCommandletKey(FString Key)
+		{
+			Key.TrimStartAndEndInline();
+			while (Key.StartsWith(TEXT("-")))
+			{
+				Key.RightChopInline(1, EAllowShrinking::No);
+			}
+			Key.TrimStartAndEndInline();
+			return Key;
+		}
+
+		bool TrySplitCommandletAssignment(const FString& Text, FString& OutKey, FString& OutValue)
+		{
+			FString Key;
+			FString Value;
+			if (!Text.Split(TEXT("="), &Key, &Value))
+			{
+				return false;
+			}
+
+			OutKey = NormalizeCommandletKey(Key);
+			OutValue = NormalizeCommandletValue(Value);
+			return !OutKey.IsEmpty();
+		}
+
+		bool TryGetCommandletParam(
+			const TArray<FString>& Tokens,
+			const TArray<FString>& Switches,
+			const TMap<FString, FString>& Params,
+			const FString& Name,
+			FString& OutValue)
+		{
+			for (const TPair<FString, FString>& Param : Params)
+			{
+				if (NormalizeCommandletKey(Param.Key).Equals(Name, ESearchCase::IgnoreCase))
+				{
+					OutValue = NormalizeCommandletValue(Param.Value);
+					return !OutValue.IsEmpty();
+				}
+			}
+
+			for (const FString& Switch : Switches)
+			{
+				FString Key;
+				FString Value;
+				if (TrySplitCommandletAssignment(Switch, Key, Value) && Key.Equals(Name, ESearchCase::IgnoreCase))
+				{
+					OutValue = MoveTemp(Value);
+					return !OutValue.IsEmpty();
+				}
+			}
+
+			for (const FString& Token : Tokens)
+			{
+				FString Key;
+				FString Value;
+				if (TrySplitCommandletAssignment(Token, Key, Value) && Key.Equals(Name, ESearchCase::IgnoreCase))
+				{
+					OutValue = MoveTemp(Value);
+					return !OutValue.IsEmpty();
+				}
+			}
+
+			return false;
+		}
+
+		bool TryParseCommandletBool(const FString& Text, bool& OutValue)
+		{
+			const FString Normalized = NormalizeCommandletValue(Text).ToLower();
+			if (Normalized.IsEmpty()
+				|| Normalized == TEXT("1")
+				|| Normalized == TEXT("true")
+				|| Normalized == TEXT("yes")
+				|| Normalized == TEXT("on"))
+			{
+				OutValue = true;
+				return true;
+			}
+
+			if (Normalized == TEXT("0")
+				|| Normalized == TEXT("false")
+				|| Normalized == TEXT("no")
+				|| Normalized == TEXT("off"))
+			{
+				OutValue = false;
+				return true;
+			}
+
+			return false;
+		}
+
+		bool HasCommandletFlag(const TArray<FString>& Tokens, const TArray<FString>& Switches, const FString& Name)
+		{
+			for (const FString& Switch : Switches)
+			{
+				FString Key;
+				FString Value;
+				const bool bHasValue = TrySplitCommandletAssignment(Switch, Key, Value);
+				if (!bHasValue)
+				{
+					Key = NormalizeCommandletKey(Switch);
+				}
+
+				if (Key.Equals(Name, ESearchCase::IgnoreCase))
+				{
+					bool bParsedValue = true;
+					return !bHasValue || !TryParseCommandletBool(Value, bParsedValue) || bParsedValue;
+				}
+			}
+
+			for (const FString& Token : Tokens)
+			{
+				FString Key;
+				FString Value;
+				const bool bHasValue = TrySplitCommandletAssignment(Token, Key, Value);
+				if (!bHasValue)
+				{
+					Key = NormalizeCommandletKey(Token);
+				}
+
+				if (Key.Equals(Name, ESearchCase::IgnoreCase))
+				{
+					bool bParsedValue = true;
+					return !bHasValue || !TryParseCommandletBool(Value, bParsedValue) || bParsedValue;
+				}
+			}
+
+			return false;
+		}
+
+		FString ResolveCommandletSourceFilePath(const FString& InSourceFilePath)
+		{
+			FString SourceFilePath = NormalizeCommandletValue(InSourceFilePath);
+			if (SourceFilePath.IsEmpty() || !FPaths::IsRelative(SourceFilePath))
+			{
+				return UE::DreamShader::NormalizeSourceFilePath(SourceFilePath);
+			}
+
+			const FString SourceDirectoryCandidate = UE::DreamShader::NormalizeSourceFilePath(
+				FPaths::Combine(UE::DreamShader::GetSourceShaderDirectory(), SourceFilePath));
+			if (IFileManager::Get().FileExists(*SourceDirectoryCandidate))
+			{
+				return SourceDirectoryCandidate;
+			}
+
+			const FString ProjectCandidate = UE::DreamShader::NormalizeSourceFilePath(
+				FPaths::Combine(FPaths::ProjectDir(), SourceFilePath));
+			if (IFileManager::Get().FileExists(*ProjectCandidate))
+			{
+				return ProjectCandidate;
+			}
+
+			return UE::DreamShader::NormalizeSourceFilePath(SourceFilePath);
+		}
+
+		FString NormalizeCommandletAssetPath(const FString& InAssetPath)
+		{
+			FString AssetPath = NormalizeCommandletValue(InAssetPath);
+			AssetPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+			if (AssetPath.StartsWith(TEXT("/")) && !AssetPath.Contains(TEXT(".")))
+			{
+				const FString AssetName = FPackageName::GetShortName(AssetPath);
+				if (!AssetName.IsEmpty())
+				{
+					return FString::Printf(TEXT("%s.%s"), *AssetPath, *AssetName);
+				}
+			}
+			return AssetPath;
+		}
+
+		UObject* LoadCommandletAsset(const FString& InAssetPath, FString& OutLoadPath)
+		{
+			OutLoadPath = NormalizeCommandletAssetPath(InAssetPath);
+			UObject* Asset = StaticLoadObject(UObject::StaticClass(), nullptr, *OutLoadPath);
+			if (!Asset && !OutLoadPath.Equals(InAssetPath, ESearchCase::CaseSensitive))
+			{
+				const FString OriginalPath = NormalizeCommandletValue(InAssetPath);
+				Asset = StaticLoadObject(UObject::StaticClass(), nullptr, *OriginalPath);
+				if (Asset)
+				{
+					OutLoadPath = OriginalPath;
+				}
+			}
+			return Asset;
+		}
+
+		bool RunDreamShaderCompileCommandlet(
+			const TArray<FString>& Tokens,
+			const TArray<FString>& Switches,
+			const TMap<FString, FString>& Params)
+		{
+			const bool bForce = HasCommandletFlag(Tokens, Switches, TEXT("Force"));
+			const bool bAll = HasCommandletFlag(Tokens, Switches, TEXT("All"));
+
+			TArray<FString> SourceFiles;
+			FString SourceFilePath;
+			if (TryGetCommandletParam(Tokens, Switches, Params, TEXT("Source"), SourceFilePath)
+				|| TryGetCommandletParam(Tokens, Switches, Params, TEXT("File"), SourceFilePath))
+			{
+				SourceFiles.Add(ResolveCommandletSourceFilePath(SourceFilePath));
+			}
+			else if (bAll)
+			{
+				FindProjectDreamShaderSourceFiles(SourceFiles);
+				SourceFiles.RemoveAll([](const FString& SourceFile)
+				{
+					return UE::DreamShader::IsDreamShaderHeaderFile(SourceFile);
+				});
+				SourceFiles.Sort([](const FString& Left, const FString& Right)
+				{
+					const int32 LeftRank = UE::DreamShader::IsDreamShaderFunctionFile(Left) ? 0 : 1;
+					const int32 RightRank = UE::DreamShader::IsDreamShaderFunctionFile(Right) ? 0 : 1;
+					if (LeftRank != RightRank)
+					{
+						return LeftRank < RightRank;
+					}
+
+					return Left.Compare(Right, ESearchCase::IgnoreCase) < 0;
+				});
+			}
+			else
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("%s"), GetDreamShaderCommandletUsage());
+				return false;
+			}
+
+			if (SourceFiles.IsEmpty())
+			{
+				UE_LOG(LogDreamShader, Warning, TEXT("DreamShader commandlet found no source files to compile."));
+				return true;
+			}
+
+			bool bSucceeded = true;
+			for (const FString& SourceFile : SourceFiles)
+			{
+				if (!UE::DreamShader::IsDreamShaderSourceFile(SourceFile) || UE::DreamShader::IsDreamShaderHeaderFile(SourceFile))
+				{
+					UE_LOG(LogDreamShader, Error, TEXT("DreamShader compile requires a .dsm or .dsf file: %s"), *SourceFile);
+					bSucceeded = false;
+					continue;
+				}
+
+				FString Message;
+				if (FMaterialGenerator::GenerateAssetsFromFile(SourceFile, Message, bForce))
+				{
+					UE_LOG(LogDreamShader, Display, TEXT("%s"), *Message);
+				}
+				else
+				{
+					UE_LOG(LogDreamShader, Error, TEXT("%s"), *Message);
+					bSucceeded = false;
+				}
+			}
+
+			return bSucceeded;
+		}
+
+		bool RunDreamShaderDecompileCommandlet(
+			const TArray<FString>& Tokens,
+			const TArray<FString>& Switches,
+			const TMap<FString, FString>& Params)
+		{
+			FString AssetPath;
+			if (!TryGetCommandletParam(Tokens, Switches, Params, TEXT("Asset"), AssetPath))
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("%s"), GetDreamShaderCommandletUsage());
+				return false;
+			}
+
+			FString LoadPath;
+			UObject* Asset = LoadCommandletAsset(AssetPath, LoadPath);
+			if (!Asset)
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("DreamShader could not load asset '%s'."), *AssetPath);
+				return false;
+			}
+
+			FString SourceText;
+			FString Error;
+			if (UMaterial* Material = Cast<UMaterial>(Asset))
+			{
+				FDreamShaderGraphDecompiler Decompiler;
+				if (!Decompiler.DecompileMaterial(Material, MakeDecompiledAssetName(Material, TEXT("Materials")), SourceText, Error))
+				{
+					UE_LOG(LogDreamShader, Error, TEXT("DreamShader failed to decompile Material '%s': %s"), *LoadPath, *Error);
+					return false;
+				}
+			}
+			else if (UMaterialFunction* MaterialFunction = Cast<UMaterialFunction>(Asset))
+			{
+				FDreamShaderGraphDecompiler Decompiler;
+				if (!Decompiler.DecompileFunction(MaterialFunction, MakeDecompiledAssetName(MaterialFunction, TEXT("Functions")), SourceText, Error))
+				{
+					UE_LOG(LogDreamShader, Error, TEXT("DreamShader failed to decompile MaterialFunction '%s': %s"), *LoadPath, *Error);
+					return false;
+				}
+			}
+			else
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("DreamShader decompile supports Material and MaterialFunction assets only: %s"), *LoadPath);
+				return false;
+			}
+
+			FString OutputPath;
+			if (!TryGetCommandletParam(Tokens, Switches, Params, TEXT("Out"), OutputPath)
+				&& !TryGetCommandletParam(Tokens, Switches, Params, TEXT("Output"), OutputPath))
+			{
+				OutputPath = MakeDefaultDecompiledFilePath(Asset);
+			}
+			OutputPath = UE::DreamShader::NormalizeSourceFilePath(OutputPath);
+			if (OutputPath.IsEmpty())
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("DreamShader failed to resolve an output file path for '%s'."), *LoadPath);
+				return false;
+			}
+
+			const FString OutputDirectory = FPaths::GetPath(OutputPath);
+			if (!IFileManager::Get().MakeDirectory(*OutputDirectory, true))
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("DreamShader failed to create output directory '%s'."), *OutputDirectory);
+				return false;
+			}
+
+			if (!FFileHelper::SaveStringToFile(SourceText, *OutputPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				UE_LOG(LogDreamShader, Error, TEXT("DreamShader failed to write decompiled source '%s'."), *OutputPath);
+				return false;
+			}
+
+			UE_LOG(LogDreamShader, Display, TEXT("DreamShader decompiled '%s' to '%s'."), *LoadPath, *OutputPath);
+			return true;
 		}
 	}
 
@@ -5787,6 +6310,49 @@ namespace UE::DreamShader::Editor::Private
 
 		return Diagnostics;
 	}
+}
+
+UDreamShaderCommandlet::UDreamShaderCommandlet()
+{
+	IsClient = false;
+	IsEditor = true;
+	IsServer = false;
+	LogToConsole = true;
+}
+
+int32 UDreamShaderCommandlet::Main(const FString& Params)
+{
+	TArray<FString> Tokens;
+	TArray<FString> Switches;
+	TMap<FString, FString> ParamValues;
+	ParseCommandLine(*Params, Tokens, Switches, ParamValues);
+
+	FString Command;
+	if (!Tokens.IsEmpty())
+	{
+		Command = Tokens[0];
+	}
+	else if (!UE::DreamShader::Editor::Private::TryGetCommandletParam(Tokens, Switches, ParamValues, TEXT("Command"), Command))
+	{
+		UE_LOG(LogDreamShader, Error, TEXT("%s"), UE::DreamShader::Editor::Private::GetDreamShaderCommandletUsage());
+		return 1;
+	}
+
+	Command.TrimStartAndEndInline();
+	if (Command.Equals(TEXT("compile"), ESearchCase::IgnoreCase)
+		|| Command.Equals(TEXT("generate"), ESearchCase::IgnoreCase))
+	{
+		return UE::DreamShader::Editor::Private::RunDreamShaderCompileCommandlet(Tokens, Switches, ParamValues) ? 0 : 1;
+	}
+
+	if (Command.Equals(TEXT("decompile"), ESearchCase::IgnoreCase)
+		|| Command.Equals(TEXT("export"), ESearchCase::IgnoreCase))
+	{
+		return UE::DreamShader::Editor::Private::RunDreamShaderDecompileCommandlet(Tokens, Switches, ParamValues) ? 0 : 1;
+	}
+
+	UE_LOG(LogDreamShader, Error, TEXT("Unknown DreamShader command '%s'.\n%s"), *Command, UE::DreamShader::Editor::Private::GetDreamShaderCommandletUsage());
+	return 1;
 }
 
 #undef LOCTEXT_NAMESPACE

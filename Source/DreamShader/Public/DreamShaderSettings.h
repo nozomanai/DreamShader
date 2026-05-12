@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "Engine/EngineTypes.h"
+#include "MaterialDomain.h"
 
 #include "DreamShaderSettings.generated.h"
 
