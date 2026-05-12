@@ -631,7 +631,9 @@ namespace UE::DreamShader::Private
 					|| IsParameterNodeType(TypeToken, TEXT("SpriteTextureSampler")))
 				{
 					Property.Type = ETextShaderPropertyType::Vector;
-					Property.ComponentCount = IsParameterNodeType(TypeToken, TEXT("ChannelMaskParameter")) ? 1 : 4;
+					Property.ComponentCount = IsParameterNodeType(TypeToken, TEXT("ChannelMaskParameter"))
+						? 1
+						: (IsParameterNodeType(TypeToken, TEXT("CurveAtlasRowParameter")) ? 3 : 4);
 					if (Property.bHasDefaultValue && !ParseVectorLiteral(Right, Property.VectorDefaultValue))
 					{
 						OutError = FString::Printf(TEXT("Invalid vector default value '%s' for property '%s'."), *Right, *Property.Name);
