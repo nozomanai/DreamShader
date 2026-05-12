@@ -16,6 +16,7 @@ class UMaterialExpression;
 class UMaterialExpressionMaterialFunctionCall;
 class UClass;
 class FProperty;
+struct FScopedSlowTask;
 
 namespace UE::DreamShader::Editor::Private
 {
@@ -153,6 +154,7 @@ namespace UE::DreamShader::Editor::Private
 	bool WriteGeneratedInclude(const FString& SourceFilePath, const FTextShaderDefinition& Definition, FString& OutError);
 	void ClearMaterialExpressions(UMaterial* Material);
 	void ClearMaterialFunctionExpressions(UMaterialFunction* MaterialFunction);
+	void LayoutGeneratedExpressions(UMaterial* Material, UMaterialFunction* MaterialFunction);
 	void ResetMaterialToDefaults(UMaterial* Material);
 	bool ValidateSettings(const FTextShaderDefinition& Definition, FString& OutError);
 	bool ApplySettings(UMaterial* Material, const FTextShaderDefinition& Definition, FString& OutError);
@@ -230,6 +232,8 @@ namespace UE::DreamShader::Editor::Private
 		TSet<FString> CreatingPropertyNames;
 		int32 NextPropertyNodeY = -620;
 		int32 NextNodeY = -120;
+		FScopedSlowTask* ActiveBuildSlowTask = nullptr;
+		mutable int32 ProgressTickCounter = 0;
 
 		FCodeValue* FindValue(const FString& Name) const;
 		bool TryCreatePropertyValue(const FString& Name, FCodeValue& OutValue, FString& OutError);
@@ -272,6 +276,7 @@ namespace UE::DreamShader::Editor::Private
 			const FCodeValue& RightValue,
 			FCodeValue& OutValue,
 			FString& OutError);
+		bool EvaluateMathBuiltinCall(const FString& FunctionName, const TArray<FCodeCallArgument>& Arguments, FCodeValue& OutValue, FString& OutError);
 		bool EvaluateMemberAccess(const TSharedPtr<FCodeExpression>& Expression, FCodeValue& OutValue, FString& OutError);
 		bool CreateSingleChannelMask(
 			const FCodeValue& BaseValue,
