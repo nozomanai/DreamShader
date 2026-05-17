@@ -10,7 +10,7 @@ DreamShader is an Unreal Engine plugin for authoring materials and material func
 
 
 
-> Current version: `1.3.6`. 
+> Current version: `1.3.7`.
 > 
 > 
 > DreamShader is still under active development, but the core workflow is already available. It is recommended to include all `.dsm` / `.dsf` / `.dsh` source files in version control. 
@@ -327,8 +327,8 @@ The extension releases are available from [dreamshader-language-support](https:/
 The repository includes a GitHub Actions release workflow. Push a tag that matches `VersionName` in `DreamShader.uplugin`:
 
 ```powershell
-git tag v1.3.6
-git push origin v1.3.6
+git tag v1.3.7
+git push origin v1.3.7
 ```
 
 The release archive is named `DreamShader-<Version>.zip` and contains the plugin source, resources, built-in libraries, documentation, README, CHANGELOG, and LICENSE. It excludes `Binaries` and `Intermediate`. The release workflow also attaches the latest VSCode extension assets from `TypeDreamMoon/dreamshader-language-support`.
@@ -337,7 +337,7 @@ The release archive is named `DreamShader-<Version>.zip` and contains the plugin
 
 | Item      | Value                                                  |
 | --------- | ------------------------------------------------------ |
-| Version   | `1.3.6`                                                |
+| Version   | `1.3.7`                                                |
 | Language  | `DreamShaderLang`                                      |
 | Author    | TypeDreamMoon                                          |
 | GitHub    | <https://github.com/TypeDreamMoon>                     |
