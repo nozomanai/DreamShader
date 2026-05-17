@@ -98,6 +98,8 @@
 #include "UObject/MetaData.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/Package.h"
+#include "UObject/EnumProperty.h"
+#include "UObject/UnrealType.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #include "DreamShaderCommandlet.h"
@@ -1943,6 +1945,119 @@ namespace UE::DreamShader::Editor::Private
 				AddIntMetadata(Entries, TEXT("ConstMipValue"), TextureSample->ConstMipValue, INDEX_NONE);
 			}
 
+			static bool HasTextureSampleGraphInputs(const UMaterialExpressionTextureSample* TextureSample)
+			{
+				return TextureSample
+					&& (TextureSample->Coordinates.IsConnected()
+						|| TextureSample->TextureObject.IsConnected()
+						|| TextureSample->MipValue.IsConnected()
+						|| TextureSample->CoordinatesDX.IsConnected()
+						|| TextureSample->CoordinatesDY.IsConnected()
+						|| TextureSample->AutomaticViewMipBiasValue.IsConnected());
+			}
+
+			void AddTextureSampleExpressionArguments(UMaterialExpressionTextureSample* TextureSample, TArray<FExpressionCallArgument>& Arguments)
+			{
+				if (!TextureSample)
+				{
+					return;
+				}
+
+				if (TextureSample->Coordinates.IsConnected())
+				{
+					Arguments.Add({ TEXT("Coordinates"), CompileInput(TextureSample->Coordinates, TEXT("0.0")), true });
+				}
+				else if (TextureSample->ConstCoordinate != 0)
+				{
+					Arguments.Add({ TEXT("ConstCoordinate"), FString::Printf(TEXT("%d"), TextureSample->ConstCoordinate), false });
+				}
+				if (TextureSample->TextureObject.IsConnected())
+				{
+					Arguments.Add({ TEXT("TextureObject"), CompileInput(TextureSample->TextureObject, TEXT("default")), true });
+				}
+				else if (TextureSample->Texture)
+				{
+					Arguments.Add({ TEXT("Texture"), MakeDreamShaderObjectPathLiteral(TextureSample->Texture), false });
+				}
+				if (TextureSample->MipValue.IsConnected())
+				{
+					Arguments.Add({ TEXT("MipValue"), CompileInput(TextureSample->MipValue, TEXT("0.0")), true });
+				}
+				if (TextureSample->CoordinatesDX.IsConnected())
+				{
+					Arguments.Add({ TEXT("CoordinatesDX"), CompileInput(TextureSample->CoordinatesDX, TEXT("0.0")), true });
+				}
+				if (TextureSample->CoordinatesDY.IsConnected())
+				{
+					Arguments.Add({ TEXT("CoordinatesDY"), CompileInput(TextureSample->CoordinatesDY, TEXT("0.0")), true });
+				}
+				if (TextureSample->AutomaticViewMipBiasValue.IsConnected())
+				{
+					Arguments.Add({ TEXT("AutomaticViewMipBiasValue"), CompileInput(TextureSample->AutomaticViewMipBiasValue, TEXT("0.0")), true });
+				}
+
+				Arguments.Add({ TEXT("SamplerType"), BuildLiteralEnumArgument(StaticEnum<EMaterialSamplerType>(), TextureSample->SamplerType.GetValue()), false });
+				if (TextureSample->SamplerSource.GetValue() != SSM_FromTextureAsset)
+				{
+					Arguments.Add({ TEXT("SamplerSource"), BuildLiteralEnumArgument(StaticEnum<ESamplerSourceMode>(), TextureSample->SamplerSource.GetValue()), false });
+				}
+				if (TextureSample->MipValueMode.GetValue() != TMVM_None)
+				{
+					Arguments.Add({ TEXT("MipValueMode"), BuildLiteralEnumArgument(StaticEnum<ETextureMipValueMode>(), TextureSample->MipValueMode.GetValue()), false });
+				}
+				if (TextureSample->GatherMode.GetValue() != TGM_None)
+				{
+					Arguments.Add({ TEXT("GatherMode"), BuildLiteralEnumArgument(StaticEnum<ETextureGatherMode>(), TextureSample->GatherMode.GetValue()), false });
+				}
+				if (!TextureSample->AutomaticViewMipBias)
+				{
+					Arguments.Add({ TEXT("AutomaticViewMipBias"), TEXT("false"), false });
+				}
+				if (TextureSample->ConstMipValue != INDEX_NONE)
+				{
+					Arguments.Add({ TEXT("ConstMipValue"), FString::Printf(TEXT("%d"), TextureSample->ConstMipValue), false });
+				}
+			}
+
+			static void AddTextureSampleParameterExpressionArguments(
+				const UMaterialExpressionTextureSampleParameter* TextureParameter,
+				TArray<FExpressionCallArgument>& Arguments)
+			{
+				if (!TextureParameter)
+				{
+					return;
+				}
+
+				if (!TextureParameter->ParameterName.IsNone())
+				{
+					Arguments.Add({
+						TEXT("ParameterName"),
+						FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(TextureParameter->ParameterName.ToString())),
+						false
+					});
+				}
+				if (!TextureParameter->Group.IsNone())
+				{
+					Arguments.Add({
+						TEXT("Group"),
+						FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(TextureParameter->Group.ToString())),
+						false
+					});
+				}
+				if (TextureParameter->SortPriority != 32)
+				{
+					Arguments.Add({ TEXT("SortPriority"), FString::Printf(TEXT("%d"), TextureParameter->SortPriority), false });
+				}
+				if (!TextureParameter->Desc.IsEmpty())
+				{
+					Arguments.Add({
+						TEXT("Desc"),
+						FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(TextureParameter->Desc)),
+						false
+					});
+				}
+			}
+
 			static int32 GetOutputComponentCount(const UMaterialExpression* Expression, const int32 OutputIndex)
 			{
 				return GetExpressionOutputComponentCount(const_cast<UMaterialExpression*>(Expression), OutputIndex);
@@ -2462,6 +2577,34 @@ namespace UE::DreamShader::Editor::Private
 				if (UMaterialExpressionTextureSampleParameter2D* TextureParameter = Cast<UMaterialExpressionTextureSampleParameter2D>(Expression))
 				{
 					const FString Name = MakeDreamShaderDeclarationName(TextureParameter->ParameterName.ToString(), TEXT("Texture"), 0);
+					if (HasTextureSampleGraphInputs(TextureParameter))
+					{
+						TArray<FExpressionCallArgument> Arguments;
+						AddTextureSampleParameterExpressionArguments(TextureParameter, Arguments);
+						AddTextureSampleExpressionArguments(TextureParameter, Arguments);
+
+						const int32 RgbaOutputIndex = FindExpressionOutputIndexByName(Expression, TEXT("RGBA"), OutputIndex);
+						const FDecompiledExpressionKey RgbaKey{ Expression, RgbaOutputIndex };
+						FDecompiledValue RgbaValue;
+						if (const FDecompiledValue* ExistingValue = ExpressionValues.Find(RgbaKey))
+						{
+							RgbaValue = *ExistingValue;
+						}
+						else
+						{
+							RgbaValue = CacheTempExpressionValue(
+								RgbaKey,
+								MakeValue(BuildUEExpressionCall(Expression, RgbaOutputIndex, Arguments), TEXT("float4"), 4, false),
+								Name);
+						}
+
+						if (OutputIndex == RgbaOutputIndex)
+						{
+							return RgbaValue;
+						}
+						return MakeExpressionOutputValue(RgbaValue, Expression, OutputIndex);
+					}
+
 					const FString DefaultValue = TextureParameter->Texture
 						? FString::Printf(TEXT(" = %s"), *MakeDreamShaderObjectPathLiteral(TextureParameter->Texture))
 						: FString();
@@ -2893,60 +3036,7 @@ namespace UE::DreamShader::Editor::Private
 				if (UMaterialExpressionTextureSample* TextureSample = Cast<UMaterialExpressionTextureSample>(Expression))
 				{
 					TArray<FExpressionCallArgument> Arguments;
-					if (TextureSample->Coordinates.IsConnected())
-					{
-						Arguments.Add({ TEXT("Coordinates"), CompileInput(TextureSample->Coordinates, TEXT("0.0")), true });
-					}
-					else if (TextureSample->ConstCoordinate != 0)
-					{
-						Arguments.Add({ TEXT("ConstCoordinate"), FString::Printf(TEXT("%d"), TextureSample->ConstCoordinate), false });
-					}
-					if (TextureSample->TextureObject.IsConnected())
-					{
-						Arguments.Add({ TEXT("TextureObject"), CompileInput(TextureSample->TextureObject, TEXT("default")), true });
-					}
-					else if (TextureSample->Texture)
-					{
-						Arguments.Add({ TEXT("Texture"), MakeDreamShaderObjectPathLiteral(TextureSample->Texture), false });
-					}
-					if (TextureSample->MipValue.IsConnected())
-					{
-						Arguments.Add({ TEXT("MipValue"), CompileInput(TextureSample->MipValue, TEXT("0.0")), true });
-					}
-					if (TextureSample->CoordinatesDX.IsConnected())
-					{
-						Arguments.Add({ TEXT("CoordinatesDX"), CompileInput(TextureSample->CoordinatesDX, TEXT("0.0")), true });
-					}
-					if (TextureSample->CoordinatesDY.IsConnected())
-					{
-						Arguments.Add({ TEXT("CoordinatesDY"), CompileInput(TextureSample->CoordinatesDY, TEXT("0.0")), true });
-					}
-					if (TextureSample->AutomaticViewMipBiasValue.IsConnected())
-					{
-						Arguments.Add({ TEXT("AutomaticViewMipBiasValue"), CompileInput(TextureSample->AutomaticViewMipBiasValue, TEXT("0.0")), true });
-					}
-
-					Arguments.Add({ TEXT("SamplerType"), BuildLiteralEnumArgument(StaticEnum<EMaterialSamplerType>(), TextureSample->SamplerType.GetValue()), false });
-					if (TextureSample->SamplerSource.GetValue() != SSM_FromTextureAsset)
-					{
-						Arguments.Add({ TEXT("SamplerSource"), BuildLiteralEnumArgument(StaticEnum<ESamplerSourceMode>(), TextureSample->SamplerSource.GetValue()), false });
-					}
-					if (TextureSample->MipValueMode.GetValue() != TMVM_None)
-					{
-						Arguments.Add({ TEXT("MipValueMode"), BuildLiteralEnumArgument(StaticEnum<ETextureMipValueMode>(), TextureSample->MipValueMode.GetValue()), false });
-					}
-					if (TextureSample->GatherMode.GetValue() != TGM_None)
-					{
-						Arguments.Add({ TEXT("GatherMode"), BuildLiteralEnumArgument(StaticEnum<ETextureGatherMode>(), TextureSample->GatherMode.GetValue()), false });
-					}
-					if (!TextureSample->AutomaticViewMipBias)
-					{
-						Arguments.Add({ TEXT("AutomaticViewMipBias"), TEXT("false"), false });
-					}
-					if (TextureSample->ConstMipValue != INDEX_NONE)
-					{
-						Arguments.Add({ TEXT("ConstMipValue"), FString::Printf(TEXT("%d"), TextureSample->ConstMipValue), false });
-					}
+					AddTextureSampleExpressionArguments(TextureSample, Arguments);
 
 					const int32 RgbaOutputIndex = FindExpressionOutputIndexByName(Expression, TEXT("RGBA"), OutputIndex);
 					const FDecompiledExpressionKey RgbaKey{ Expression, RgbaOutputIndex };
@@ -3076,6 +3166,193 @@ namespace UE::DreamShader::Editor::Private
 					Arguments);
 			}
 
+			static bool IsControlExpressionArgumentName(const FString& Name)
+			{
+				const FString NormalizedName = UE::DreamShader::NormalizeSettingKey(Name);
+				return NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("Class"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("OutputType"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("ResultType"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("Output"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("OutputName"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("OutputIndex"));
+			}
+
+			static bool IsEditorOnlyExpressionPropertyName(const FString& Name)
+			{
+				const FString NormalizedName = UE::DreamShader::NormalizeSettingKey(Name);
+				return NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("MaterialExpressionEditorX"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("MaterialExpressionEditorY"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("Desc"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("bCommentBubbleVisible"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("bShowOutputNameOnPin"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("bHidePreviewWindow"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("bCollapsed"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("bShaderInputData"))
+					|| NormalizedName == UE::DreamShader::NormalizeSettingKey(TEXT("SortPriority"));
+			}
+
+			static bool IsReflectedExpressionLiteralProperty(const FProperty* Property)
+			{
+				if (!Property
+					|| Property->HasAnyPropertyFlags(CPF_Deprecated | CPF_Transient | CPF_DuplicateTransient)
+					|| IsMaterialExpressionInputProperty(Property)
+					|| !Property->HasAnyPropertyFlags(CPF_Edit)
+					|| IsControlExpressionArgumentName(Property->GetName())
+					|| IsEditorOnlyExpressionPropertyName(Property->GetName()))
+				{
+					return false;
+				}
+
+				return CastField<FBoolProperty>(Property) != nullptr
+					|| CastField<FNumericProperty>(Property) != nullptr
+					|| CastField<FEnumProperty>(Property) != nullptr
+					|| CastField<FByteProperty>(Property) != nullptr
+					|| CastField<FNameProperty>(Property) != nullptr
+					|| CastField<FStrProperty>(Property) != nullptr
+					|| CastField<FTextProperty>(Property) != nullptr
+					|| CastField<FObjectPropertyBase>(Property) != nullptr;
+			}
+
+			static bool IsReflectedPropertyDefaultValue(const UObject* Object, const FProperty* Property)
+			{
+				if (!Object || !Property)
+				{
+					return true;
+				}
+
+				UObject* DefaultObject = Object->GetClass() ? Object->GetClass()->GetDefaultObject(false) : nullptr;
+				if (!DefaultObject)
+				{
+					return false;
+				}
+
+				return Property->Identical_InContainer(Object, DefaultObject);
+			}
+
+			static bool TryBuildReflectedExpressionLiteralArgument(
+				const UMaterialExpression* Expression,
+				const FProperty* Property,
+				FExpressionCallArgument& OutArgument)
+			{
+				if (!Expression || !Property || !IsReflectedExpressionLiteralProperty(Property) || IsReflectedPropertyDefaultValue(Expression, Property))
+				{
+					return false;
+				}
+
+				const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Expression);
+				if (!ValuePtr)
+				{
+					return false;
+				}
+
+				FString ValueText;
+				if (const FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
+				{
+					ValueText = BoolProperty->GetPropertyValue(ValuePtr) ? TEXT("true") : TEXT("false");
+				}
+				else if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+				{
+					if (UEnum* Enum = EnumProperty->GetEnum())
+					{
+						ValueText = BuildLiteralEnumArgument(Enum, EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr));
+					}
+				}
+				else if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+				{
+					if (UEnum* Enum = ByteProperty->Enum)
+					{
+						ValueText = BuildLiteralEnumArgument(Enum, ByteProperty->GetPropertyValue(ValuePtr));
+					}
+					else
+					{
+						ValueText = FString::FromInt(ByteProperty->GetPropertyValue(ValuePtr));
+					}
+				}
+				else if (const FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
+				{
+					if (NumericProperty->IsFloatingPoint())
+					{
+						ValueText = FormatDreamShaderFloat(NumericProperty->GetFloatingPointPropertyValue(ValuePtr));
+					}
+					else if (NumericProperty->IsInteger())
+					{
+						if (CastField<FUInt16Property>(Property)
+							|| CastField<FUInt32Property>(Property)
+							|| CastField<FUInt64Property>(Property))
+						{
+							ValueText = FString::Printf(TEXT("%llu"), static_cast<unsigned long long>(NumericProperty->GetUnsignedIntPropertyValue(ValuePtr)));
+						}
+						else
+						{
+							ValueText = FString::Printf(TEXT("%lld"), static_cast<long long>(NumericProperty->GetSignedIntPropertyValue(ValuePtr)));
+						}
+					}
+				}
+				else if (const FNameProperty* NameProperty = CastField<FNameProperty>(Property))
+				{
+					const FName NameValue = NameProperty->GetPropertyValue(ValuePtr);
+					if (!NameValue.IsNone())
+					{
+						ValueText = FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(NameValue.ToString()));
+					}
+				}
+				else if (const FStrProperty* StringProperty = CastField<FStrProperty>(Property))
+				{
+					ValueText = FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(StringProperty->GetPropertyValue(ValuePtr)));
+				}
+				else if (const FTextProperty* TextProperty = CastField<FTextProperty>(Property))
+				{
+					ValueText = FString::Printf(TEXT("\"%s\""), *EscapeDreamShaderString(TextProperty->GetPropertyValue(ValuePtr).ToString()));
+				}
+				else if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property))
+				{
+					if (const UObject* ObjectValue = ObjectProperty->GetObjectPropertyValue(ValuePtr))
+					{
+						ValueText = MakeDreamShaderObjectPathLiteral(ObjectValue);
+					}
+				}
+
+				if (ValueText.TrimStartAndEnd().IsEmpty())
+				{
+					return false;
+				}
+
+				OutArgument = { Property->GetName(), ValueText, false };
+				return true;
+			}
+
+			void AddReflectedExpressionLiteralArguments(
+				const UMaterialExpression* Expression,
+				TArray<FExpressionCallArgument>& Arguments) const
+			{
+				if (!Expression)
+				{
+					return;
+				}
+
+				TSet<FString> ExistingArgumentNames;
+				for (const FExpressionCallArgument& Argument : Arguments)
+				{
+					ExistingArgumentNames.Add(UE::DreamShader::NormalizeSettingKey(Argument.Name));
+				}
+
+				for (TFieldIterator<FProperty> It(Expression->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+				{
+					FProperty* Property = *It;
+					if (!Property || ExistingArgumentNames.Contains(UE::DreamShader::NormalizeSettingKey(Property->GetName())))
+					{
+						continue;
+					}
+
+					FExpressionCallArgument ReflectedArgument;
+					if (TryBuildReflectedExpressionLiteralArgument(Expression, Property, ReflectedArgument))
+					{
+						ExistingArgumentNames.Add(UE::DreamShader::NormalizeSettingKey(ReflectedArgument.Name));
+						Arguments.Add(ReflectedArgument);
+					}
+				}
+			}
+
 			FString BuildGenericExpressionCall(UMaterialExpression* Expression, const int32 OutputIndex)
 			{
 				TArray<FExpressionCallArgument> Arguments;
@@ -3096,6 +3373,8 @@ namespace UE::DreamShader::Editor::Private
 							InputIndex);
 						Arguments.Add({ ArgumentName, CompileInput(*Input, TEXT("0.0")), true });
 					}
+
+					AddReflectedExpressionLiteralArguments(Expression, Arguments);
 				}
 
 				return BuildUEExpressionCall(Expression, OutputIndex, Arguments);

@@ -39,16 +39,23 @@ namespace UE::DreamShader::Editor::Private
 			ActiveBuildSlowTask = nullptr;
 		};
 
+		int32 StatementIndex = 0;
 		for (const FCodeStatement& Statement : Statements)
 		{
-			BuildSlowTask.EnterProgressFrame(1.0f, FText::FromString(
-				Statement.TargetName.IsEmpty()
-					? TEXT("Evaluating DreamShader graph statement...")
-					: FString::Printf(TEXT("Evaluating DreamShader graph statement '%s'..."), *Statement.TargetName)));
+			const bool bVerboseProgress = Statements.Num() <= 512 || (StatementIndex % 64) == 0;
+			BuildSlowTask.EnterProgressFrame(
+				1.0f,
+				bVerboseProgress
+					? FText::FromString(
+						Statement.TargetName.IsEmpty()
+							? FString::Printf(TEXT("Evaluating DreamShader graph statement %d of %d..."), StatementIndex + 1, Statements.Num())
+							: FString::Printf(TEXT("Evaluating DreamShader graph statement %d of %d: '%s'..."), StatementIndex + 1, Statements.Num(), *Statement.TargetName))
+					: FText::GetEmpty());
 			if (!ExecuteStatement(Statement, OutError))
 			{
 				return false;
 			}
+			++StatementIndex;
 		}
 
 		return true;
@@ -493,7 +500,8 @@ namespace UE::DreamShader::Editor::Private
 			ExpressionClass,
 			nullptr,
 			PositionX,
-			PositionY);
+			PositionY,
+			false);
 	}
 
 	UMaterialExpression* FCodeGraphBuilder::CreateScalarLiteralNode(const double Value, const int32 PositionY) const

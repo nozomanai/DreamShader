@@ -272,7 +272,8 @@ namespace UE::DreamShader::Editor
 					UMaterialExpressionMakeMaterialAttributes::StaticClass(),
 					nullptr,
 					120,
-					InOutPositionY));
+					InOutPositionY,
+					false));
 			if (!Expression)
 			{
 				OutError = FString::Printf(TEXT("Failed to create a MakeMaterialAttributes node for '%s'."), *ValueName);

@@ -677,6 +677,20 @@ namespace UE::DreamShader::Editor::Private
 			return false;
 		}
 
+		UMaterialExpressionCustom* CustomExpression = Cast<UMaterialExpressionCustom>(Expression);
+		if (CustomExpression)
+		{
+			ECustomMaterialOutputType CustomOutputType = CMOT_Float1;
+			if (!TryResolveCustomOutputType(OutputTypeText, CustomOutputType))
+			{
+				OutError = FString::Printf(TEXT("UE.%s OutputType '%s' is not a valid Custom node output type."), *FunctionName, *OutputTypeText);
+				return false;
+			}
+			CustomExpression->OutputType = CustomOutputType;
+			CustomExpression->Inputs.Reset();
+			CustomExpression->AdditionalOutputs.Reset();
+		}
+
 		TArray<TPair<FName, FCodeValue>> BoundInputValues;
 		for (const FCodeCallArgument& Argument : Arguments)
 		{
@@ -708,8 +722,25 @@ namespace UE::DreamShader::Editor::Private
 			FProperty* BoundProperty = BoundInputByPinName ? nullptr : FindMaterialExpressionArgumentProperty(ExpressionClass, Argument.Name);
 			if (!BoundInputByPinName && !BoundProperty)
 			{
-				OutError = FString::Printf(TEXT("UE.%s: '%s' is not a property on '%s'."), *FunctionName, *Argument.Name, *ExpressionClass->GetName());
-				return false;
+				if (!CustomExpression)
+				{
+					OutError = FString::Printf(TEXT("UE.%s: '%s' is not a property on '%s'."), *FunctionName, *Argument.Name, *ExpressionClass->GetName());
+					return false;
+				}
+
+				FCodeValue InputValue;
+				if (!EvaluateExpression(Argument.Expression, InputValue, OutError))
+				{
+					OutError = FString::Printf(TEXT("UE.%s input '%s': %s"), *FunctionName, *Argument.Name, *OutError);
+					return false;
+				}
+
+				FCustomInput CustomInput;
+				CustomInput.InputName = FName(*Argument.Name);
+				CustomExpression->Inputs.Add(CustomInput);
+				ConnectCodeValueToInput(CustomExpression->Inputs.Last().Input, InputValue);
+				BoundInputValues.Add(TPair<FName, FCodeValue>(FName(*NormalizedArgumentName), InputValue));
+				continue;
 			}
 
 			if (BoundInputByPinName || IsMaterialExpressionInputProperty(BoundProperty))
@@ -770,6 +801,43 @@ namespace UE::DreamShader::Editor::Private
 		{
 			OutError = FString::Printf(TEXT("UE.%s cannot use OutputName/Output together with OutputIndex."), *FunctionName);
 			return false;
+		}
+
+		if (CustomExpression)
+		{
+			ECustomMaterialOutputType CustomOutputType = CustomExpression->OutputType;
+			FString CustomOutputName;
+			int32 RequestedCustomOutputIndex = 0;
+			if (OutputNameArgument)
+			{
+				if (!TryExtractLiteralText(OutputNameArgument->Expression, CustomOutputName) || CustomOutputName.TrimStartAndEnd().IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("UE.%s OutputName must be a non-empty literal value."), *FunctionName);
+					return false;
+				}
+				RequestedCustomOutputIndex = 1;
+			}
+			else if (OutputIndexArgument)
+			{
+				if (!TryExtractIntegerLiteral(OutputIndexArgument->Expression, RequestedCustomOutputIndex) || RequestedCustomOutputIndex < 0)
+				{
+					OutError = FString::Printf(TEXT("UE.%s OutputIndex is out of range for '%s'."), *FunctionName, *ExpressionClass->GetName());
+					return false;
+				}
+			}
+
+			for (int32 AdditionalOutputIndex = 0; AdditionalOutputIndex < RequestedCustomOutputIndex; ++AdditionalOutputIndex)
+			{
+				FCustomOutput CustomOutput;
+				CustomOutput.OutputName = FName(*(
+					AdditionalOutputIndex == RequestedCustomOutputIndex - 1 && !CustomOutputName.IsEmpty()
+						? CustomOutputName
+						: FString::Printf(TEXT("Output%d"), AdditionalOutputIndex + 1)));
+				CustomOutput.OutputType = CustomOutputType;
+				CustomExpression->AdditionalOutputs.Add(CustomOutput);
+			}
+
+			CustomExpression->RebuildOutputs();
 		}
 
 		int32 ResolvedOutputIndex = 0;
