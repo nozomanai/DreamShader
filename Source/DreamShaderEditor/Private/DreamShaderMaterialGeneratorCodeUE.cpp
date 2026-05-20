@@ -516,6 +516,8 @@ namespace UE::DreamShader::Editor::Private
 		Builtins.Add({ TEXT("WorldPosition"), UMaterialExpressionWorldPosition::StaticClass(), 3, {} });
 		Builtins.Add({ TEXT("ObjectPositionWS"), UMaterialExpressionObjectPositionWS::StaticClass(), 3, {} });
 		Builtins.Add({ TEXT("CameraVectorWS"), UMaterialExpressionCameraVectorWS::StaticClass(), 3, {} });
+		Builtins.Add({ TEXT("VertexNormalWS"), UMaterialExpressionVertexNormalWS::StaticClass(), 3, {} });
+		Builtins.Add({ TEXT("VertexTangentWS"), UMaterialExpressionVertexTangentWS::StaticClass(), 3, {} });
 		Builtins.Add({ TEXT("ScreenPosition"), UMaterialExpressionScreenPosition::StaticClass(), 4, {} });
 		Builtins.Add({ TEXT("VertexColor"), UMaterialExpressionVertexColor::StaticClass(), 4, {} });
 
@@ -967,20 +969,6 @@ namespace UE::DreamShader::Editor::Private
 			}
 		};
 
-		auto ApplyGenericExpressionOutputType = [&OutputComponents, &bIsTextureObject, Expression, ResolvedOutputIndex]()
-		{
-			int32 ResolvedComponentCount = 0;
-			bool bResolvedIsTextureObject = false;
-			if (TryResolveMaterialValueType(
-				Expression->GetOutputValueType(ResolvedOutputIndex),
-				ResolvedComponentCount,
-				bResolvedIsTextureObject))
-			{
-				OutputComponents = ResolvedComponentCount;
-				bIsTextureObject = bResolvedIsTextureObject;
-			}
-		};
-
 		if (Expression->IsA<UMaterialExpressionTextureCoordinate>()
 			|| Expression->IsA<UMaterialExpressionPanner>()
 			|| Expression->GetClass()->GetName().Equals(TEXT("MaterialExpressionRotator"), ESearchCase::IgnoreCase))
@@ -1020,10 +1008,6 @@ namespace UE::DreamShader::Editor::Private
 			}
 			OutputComponents = MaskComponentCount > 0 ? MaskComponentCount : 1;
 			bIsTextureObject = false;
-		}
-		else
-		{
-			ApplyGenericExpressionOutputType();
 		}
 
 		OutValue.Expression = Expression;

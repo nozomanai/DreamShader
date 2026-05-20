@@ -80,6 +80,8 @@
 #include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexColor.h"
+#include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialExpressionVertexTangentWS.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialFunctionInterface.h"
@@ -712,6 +714,15 @@ namespace UE::DreamShader::Editor::Private
 				|| Expression->GetClass()->GetName().Equals(TEXT("MaterialExpressionRotator"), ESearchCase::IgnoreCase))
 			{
 				return Finish(2);
+			}
+
+			if (Cast<UMaterialExpressionWorldPosition>(Expression)
+				|| Cast<UMaterialExpressionObjectPositionWS>(Expression)
+				|| Cast<UMaterialExpressionCameraVectorWS>(Expression)
+				|| Cast<UMaterialExpressionVertexNormalWS>(Expression)
+				|| Cast<UMaterialExpressionVertexTangentWS>(Expression))
+			{
+				return Finish(3);
 			}
 
 			if (UMaterialExpressionFunctionInput* FunctionInput = Cast<UMaterialExpressionFunctionInput>(Expression))

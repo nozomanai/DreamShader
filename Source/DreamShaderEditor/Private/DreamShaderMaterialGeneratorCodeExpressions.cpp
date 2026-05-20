@@ -1705,6 +1705,14 @@ namespace UE::DreamShader::Editor::Private
 			OutError = TEXT("Cannot build an empty vector.");
 			return false;
 		}
+
+		if (Parts.Num() == 1)
+		{
+			OutValue = Parts[0];
+			return true;
+		}
+
+		int32 TotalComponentCount = 0;
 		for (const FCodeValue& Part : Parts)
 		{
 			if (Part.bIsTextureObject || Part.bIsMaterialAttributes)
@@ -1712,6 +1720,13 @@ namespace UE::DreamShader::Editor::Private
 				OutError = TEXT("AppendVector inputs must be numeric scalar/vector values.");
 				return false;
 			}
+			TotalComponentCount += Part.ComponentCount;
+		}
+
+		if (TotalComponentCount > 4)
+		{
+			OutError = FString::Printf(TEXT("AppendVector cannot build %d components; Unreal material vectors support at most 4."), TotalComponentCount);
+			return false;
 		}
 
 		FCodeValue Current = Parts[0];
@@ -2054,6 +2069,12 @@ namespace UE::DreamShader::Editor::Private
 				return false;
 			}
 			OutValue.ComponentCount = ExpectedComponents;
+			return true;
+		}
+
+		if (Parts.Num() == 1 && Parts[0].ComponentCount == ExpectedComponents)
+		{
+			OutValue = Parts[0];
 			return true;
 		}
 
