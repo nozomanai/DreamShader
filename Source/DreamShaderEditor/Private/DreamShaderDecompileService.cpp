@@ -12,14 +12,51 @@ namespace UE::DreamShader::Editor::Private
 {
 	namespace
 	{
-		FString MakeDreamShaderDeclarationName(const FString& InName, const TCHAR* FallbackPrefix, const int32 Index)
+		FString MakeDecompiledAssetPathSegment(const FString& InSegment, const TCHAR* FallbackPrefix, const int32 Index)
 		{
-			FString Result = UE::DreamShader::SanitizeIdentifier(InName.TrimStartAndEnd());
-			if (Result.IsEmpty() || Result == TEXT("DreamShaderSymbol"))
+			FString Result = InSegment.TrimStartAndEnd();
+			if (Result.IsEmpty())
 			{
-				Result = FString::Printf(TEXT("%s%d"), FallbackPrefix, Index + 1);
+				return FString::Printf(TEXT("%s%d"), FallbackPrefix, Index + 1);
 			}
+
+			Result.ReplaceInline(TEXT("\\"), TEXT("_"));
+			Result.ReplaceInline(TEXT("/"), TEXT("_"));
+			Result.ReplaceInline(TEXT("."), TEXT("_"));
+			Result.ReplaceInline(TEXT(":"), TEXT("_"));
 			return Result;
+		}
+
+		FString MakeDecompiledSourceFileSegment(const FString& InSegment, const TCHAR* FallbackPrefix, const int32 Index)
+		{
+			FString Result = InSegment.TrimStartAndEnd();
+			if (Result.IsEmpty())
+			{
+				return FString::Printf(TEXT("%s%d"), FallbackPrefix, Index + 1);
+			}
+
+			for (int32 CharIndex = 0; CharIndex < Result.Len(); ++CharIndex)
+			{
+				const TCHAR Character = Result[CharIndex];
+				if (Character < TCHAR(' ')
+					|| Character == TCHAR('<')
+					|| Character == TCHAR('>')
+					|| Character == TCHAR(':')
+					|| Character == TCHAR('"')
+					|| Character == TCHAR('/')
+					|| Character == TCHAR('\\')
+					|| Character == TCHAR('|')
+					|| Character == TCHAR('?')
+					|| Character == TCHAR('*'))
+				{
+					Result[CharIndex] = TCHAR('_');
+				}
+			}
+
+			Result.TrimStartAndEndInline();
+			return Result.IsEmpty()
+				? FString::Printf(TEXT("%s%d"), FallbackPrefix, Index + 1)
+				: Result;
 		}
 
 		FString MakeStableDecompiledSourcePath(const UObject* Asset, const FString& CategoryDirectory, const TCHAR* Extension)
@@ -46,7 +83,7 @@ namespace UE::DreamShader::Editor::Private
 			FString RelativePath;
 			for (int32 SegmentIndex = 0; SegmentIndex < Segments.Num(); ++SegmentIndex)
 			{
-				const FString SanitizedSegment = MakeDreamShaderDeclarationName(
+				const FString SanitizedSegment = MakeDecompiledSourceFileSegment(
 					Segments[SegmentIndex],
 					SegmentIndex + 1 == Segments.Num() ? TEXT("Asset") : TEXT("Folder"),
 					SegmentIndex);
@@ -96,7 +133,7 @@ namespace UE::DreamShader::Editor::Private
 		FString RelativeName;
 		for (int32 SegmentIndex = 0; SegmentIndex < Segments.Num(); ++SegmentIndex)
 		{
-			const FString SanitizedSegment = MakeDreamShaderDeclarationName(
+			const FString SanitizedSegment = MakeDecompiledAssetPathSegment(
 				Segments[SegmentIndex],
 				SegmentIndex + 1 == Segments.Num() ? TEXT("Asset") : TEXT("Folder"),
 				SegmentIndex);

@@ -118,7 +118,7 @@ namespace UE::DreamShader::Editor::Private
 
 			const auto BuildLiteral = [&OutLiteral](const TCHAR* RootName, const FString& RelativePath)
 			{
-				OutLiteral = FString::Printf(TEXT("Path(%s, %s)"), RootName, *RelativePath);
+				OutLiteral = FString::Printf(TEXT("Path(%s, \"%s\")"), RootName, *EscapeDreamShaderString(RelativePath));
 			};
 
 			if (PackageName.StartsWith(TEXT("/Game/"), ESearchCase::IgnoreCase))
@@ -168,7 +168,10 @@ namespace UE::DreamShader::Editor::Private
 				{
 					RelativePath.RightChopInline(1, EAllowShrinking::No);
 				}
-				OutLiteral = FString::Printf(TEXT("Path(Plugins.%s, %s)"), *BestPluginName, *RelativePath);
+				OutLiteral = FString::Printf(
+					TEXT("Path(Plugins.%s, \"%s\")"),
+					*BestPluginName,
+					*EscapeDreamShaderString(RelativePath));
 				return true;
 			}
 

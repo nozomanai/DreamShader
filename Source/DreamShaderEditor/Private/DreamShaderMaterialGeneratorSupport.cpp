@@ -788,6 +788,13 @@ namespace UE::DreamShader::Editor::Private
 		for (int32 Index = 0; Index < InText.Len(); ++Index)
 		{
 			const TCHAR Character = InText[Index];
+			if (bInString && Character == TCHAR('\\') && InText.IsValidIndex(Index + 1))
+			{
+				Current.AppendChar(Character);
+				Current.AppendChar(InText[++Index]);
+				continue;
+			}
+
 			if (Character == TCHAR('"'))
 			{
 				bInString = !bInString;
@@ -814,13 +821,54 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
+	static FString UnescapeDreamShaderStringLiteral(const FString& InText)
+	{
+		FString Unescaped;
+		Unescaped.Reserve(InText.Len());
+		for (int32 Index = 0; Index < InText.Len(); ++Index)
+		{
+			const TCHAR Character = InText[Index];
+			if (Character != TCHAR('\\') || !InText.IsValidIndex(Index + 1))
+			{
+				Unescaped.AppendChar(Character);
+				continue;
+			}
+
+			const TCHAR EscapedCharacter = InText[++Index];
+			switch (EscapedCharacter)
+			{
+			case TCHAR('n'):
+				Unescaped.AppendChar(TCHAR('\n'));
+				break;
+			case TCHAR('r'):
+				Unescaped.AppendChar(TCHAR('\r'));
+				break;
+			case TCHAR('t'):
+				Unescaped.AppendChar(TCHAR('\t'));
+				break;
+			case TCHAR('"'):
+				Unescaped.AppendChar(TCHAR('"'));
+				break;
+			case TCHAR('\\'):
+				Unescaped.AppendChar(TCHAR('\\'));
+				break;
+			default:
+				Unescaped.AppendChar(EscapedCharacter);
+				break;
+			}
+		}
+
+		return Unescaped;
+	}
+
 	static FString TrimMatchingQuotes(const FString& InText)
 	{
 		FString Result = InText.TrimStartAndEnd();
 		if (Result.Len() >= 2 && Result.StartsWith(TEXT("\"")) && Result.EndsWith(TEXT("\"")))
 		{
-			Result = Result.Mid(1, Result.Len() - 2);
+			return UnescapeDreamShaderStringLiteral(Result.Mid(1, Result.Len() - 2));
 		}
+
 		return Result;
 	}
 
