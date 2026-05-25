@@ -640,7 +640,7 @@ namespace UE::DreamShader::Editor::Private
 		if (!OutputTypeArgument)
 		{
 			OutError = FString::Printf(
-				TEXT("Unsupported UE builtin call '%s' in Graph. For generic MaterialExpression calls, add OutputType=\"float1/2/3/4/Texture2D\"."),
+				TEXT("Unsupported UE builtin call '%s' in Graph. For generic MaterialExpression calls, add OutputType=\"float1/2/3/4/Texture2D/TextureCube/Texture2DArray/VolumeTexture\"."),
 				*CalleeName);
 			return false;
 		}
@@ -654,7 +654,8 @@ namespace UE::DreamShader::Editor::Private
 
 		int32 OutputComponents = 0;
 		bool bIsTextureObject = false;
-		if (!TryResolveCodeDeclaredType(OutputTypeText, OutputComponents, bIsTextureObject))
+		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
+		if (!TryResolveCodeDeclaredType(OutputTypeText, OutputComponents, bIsTextureObject, TextureType))
 		{
 			OutError = FString::Printf(TEXT("UE.%s OutputType '%s' is not supported."), *FunctionName, *OutputTypeText);
 			return false;
@@ -1033,6 +1034,7 @@ namespace UE::DreamShader::Editor::Private
 		OutValue.OutputIndex = ResolvedOutputIndex;
 		OutValue.ComponentCount = OutputComponents;
 		OutValue.bIsTextureObject = bIsTextureObject;
+		OutValue.TextureType = TextureType;
 		OutValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject);
 		return true;
 	}
