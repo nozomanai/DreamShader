@@ -57,11 +57,13 @@
 #include "Materials/MaterialExpressionMax.h"
 #include "Materials/MaterialExpressionMin.h"
 #include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionNormalize.h"
 #include "Materials/MaterialExpressionObjectPositionWS.h"
 #include "Materials/MaterialExpressionOneMinus.h"
 #include "Materials/MaterialExpressionPanner.h"
 #include "Materials/MaterialExpressionPower.h"
+#include "Materials/MaterialExpressionReroute.h"
 #include "Materials/MaterialExpressionRotator.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionScreenPosition.h"
@@ -1442,6 +1444,7 @@ namespace UE::DreamShader::Editor::Private
 				ActiveDecompileSlowTask = nullptr;
 				ProgressVisitedExpressions.Reset();
 				CompilingExpressionKeys.Reset();
+				CompilingNamedRerouteDeclarations.Reset();
 			}
 
 			static void AppendSection(TArray<FString>& Lines, const TCHAR* SectionName, const TArray<FString>& LinesA)
@@ -2044,6 +2047,41 @@ namespace UE::DreamShader::Editor::Private
 				return CacheExpressionValue(Key, AddTempValueWithName(Value, Name));
 			}
 
+			FDecompiledValue CacheReusableExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, UMaterialExpression* Expression)
+			{
+				if (Value.bIsSimple)
+				{
+					return CacheExpressionValue(Key, Value);
+				}
+
+				return CacheTempExpressionValue(
+					Key,
+					Value,
+					Expression ? GetMaterialExpressionShortName(Expression->GetClass()) : TEXT("Node"));
+			}
+
+			bool TracePlainReroutesForDecompile(const FExpressionInput& Input, FExpressionInput& OutInput)
+			{
+				OutInput = Input;
+
+				TSet<const UMaterialExpressionReroute*> VisitedReroutes;
+				while (UMaterialExpressionReroute* Reroute = Cast<UMaterialExpressionReroute>(OutInput.Expression))
+				{
+					if (VisitedReroutes.Contains(Reroute))
+					{
+						Warnings.AddUnique(FString::Printf(
+							TEXT("Detected a recursive reroute dependency while decompiling node '%s'; emitted a default literal to avoid stack overflow."),
+							*Reroute->GetName()));
+						return false;
+					}
+
+					VisitedReroutes.Add(Reroute);
+					OutInput = Reroute->Input;
+				}
+
+				return true;
+			}
+
 			FString CompileInput(const FExpressionInput& Input, const FString& DefaultText)
 			{
 				return CompileInputValue(Input, MakeValue(DefaultText, TEXT("float"), 1, true)).Text;
@@ -2051,19 +2089,54 @@ namespace UE::DreamShader::Editor::Private
 
 			FDecompiledValue CompileInputValue(const FExpressionInput& Input, const FDecompiledValue& DefaultValue)
 			{
-				const FExpressionInput TracedInput = Input.GetTracedInput();
-				if (!TracedInput.Expression)
+				FExpressionInput DecompileInput;
+				if (!TracePlainReroutesForDecompile(Input, DecompileInput))
 				{
 					return DefaultValue;
 				}
 
-				FDecompiledValue Value = CompileExpressionValue(TracedInput.Expression, TracedInput.OutputIndex);
+				if (UMaterialExpressionNamedRerouteUsage* NamedRerouteUsage = Cast<UMaterialExpressionNamedRerouteUsage>(DecompileInput.Expression))
+				{
+					if (!IsValid(NamedRerouteUsage->Declaration))
+					{
+						Warnings.AddUnique(FString::Printf(
+							TEXT("Named reroute usage '%s' has no valid declaration; emitted its default value."),
+							*NamedRerouteUsage->GetName()));
+						return DefaultValue;
+					}
+
+					FDecompiledValue Value = CompileNamedRerouteDeclarationValue(NamedRerouteUsage->Declaration, DecompileInput.OutputIndex);
+					const FString MaskSuffix = MakeInputMaskSuffix(Input);
+					if (!MaskSuffix.IsEmpty())
+					{
+						Value = MakeSwizzledValue(Value, MaskSuffix);
+					}
+					return Value;
+				}
+
+				if (UMaterialExpressionNamedRerouteDeclaration* NamedRerouteDeclaration = Cast<UMaterialExpressionNamedRerouteDeclaration>(DecompileInput.Expression))
+				{
+					FDecompiledValue Value = CompileNamedRerouteDeclarationValue(NamedRerouteDeclaration, DecompileInput.OutputIndex);
+					const FString MaskSuffix = MakeInputMaskSuffix(Input);
+					if (!MaskSuffix.IsEmpty())
+					{
+						Value = MakeSwizzledValue(Value, MaskSuffix);
+					}
+					return Value;
+				}
+
+				if (!DecompileInput.Expression)
+				{
+					return DefaultValue;
+				}
+
+				FDecompiledValue Value = CompileExpressionValue(DecompileInput.Expression, DecompileInput.OutputIndex);
 				const FString MaskSuffix = MakeInputMaskSuffix(Input);
 				if (!MaskSuffix.IsEmpty())
 				{
 					Value = MakeSwizzledValue(Value, MaskSuffix);
 				}
-				return MaybeMaterializeValue(Value, TracedInput.Expression->GetName());
+				return MaybeMaterializeValue(Value, DecompileInput.Expression->GetName());
 			}
 
 			FString CompileConnectedOrLiteral(const FExpressionInput& Input, const FString& LiteralText)
@@ -2273,6 +2346,24 @@ namespace UE::DreamShader::Editor::Private
 						true);
 				}
 
+				if (UMaterialExpressionNamedRerouteUsage* NamedRerouteUsage = Cast<UMaterialExpressionNamedRerouteUsage>(Expression))
+				{
+					if (!IsValid(NamedRerouteUsage->Declaration))
+					{
+						Warnings.AddUnique(FString::Printf(
+							TEXT("Named reroute usage '%s' has no valid declaration; emitted a default literal."),
+							*NamedRerouteUsage->GetName()));
+						return MakeDefaultValueForExpressionOutput(Expression, OutputIndex);
+					}
+
+					return CacheExpressionValue(Key, CompileNamedRerouteDeclarationValue(NamedRerouteUsage->Declaration, OutputIndex));
+				}
+
+				if (UMaterialExpressionNamedRerouteDeclaration* NamedRerouteDeclaration = Cast<UMaterialExpressionNamedRerouteDeclaration>(Expression))
+				{
+					return CacheExpressionValue(Key, CompileNamedRerouteDeclarationValue(NamedRerouteDeclaration, OutputIndex));
+				}
+
 				if (UMaterialExpressionCurveAtlasRowParameter* CurveAtlas = Cast<UMaterialExpressionCurveAtlasRowParameter>(Expression))
 				{
 					TArray<FExpressionCallArgument> Arguments;
@@ -2456,34 +2547,34 @@ namespace UE::DreamShader::Editor::Private
 
 				if (UMaterialExpressionAdd* Add = Cast<UMaterialExpressionAdd>(Expression))
 				{
-					return MakeBinaryValue(
+					return CacheReusableExpressionValue(Key, MakeBinaryValue(
 						TEXT("+"),
 						CompileConnectedOrLiteralValue(Add->A, FormatDreamShaderFloat(Add->ConstA), TEXT("float"), 1),
-						CompileConnectedOrLiteralValue(Add->B, FormatDreamShaderFloat(Add->ConstB), TEXT("float"), 1));
+						CompileConnectedOrLiteralValue(Add->B, FormatDreamShaderFloat(Add->ConstB), TEXT("float"), 1)), Expression);
 				}
 
 				if (UMaterialExpressionSubtract* Subtract = Cast<UMaterialExpressionSubtract>(Expression))
 				{
-					return MakeBinaryValue(
+					return CacheReusableExpressionValue(Key, MakeBinaryValue(
 						TEXT("-"),
 						CompileConnectedOrLiteralValue(Subtract->A, FormatDreamShaderFloat(Subtract->ConstA), TEXT("float"), 1),
-						CompileConnectedOrLiteralValue(Subtract->B, FormatDreamShaderFloat(Subtract->ConstB), TEXT("float"), 1));
+						CompileConnectedOrLiteralValue(Subtract->B, FormatDreamShaderFloat(Subtract->ConstB), TEXT("float"), 1)), Expression);
 				}
 
 				if (UMaterialExpressionMultiply* Multiply = Cast<UMaterialExpressionMultiply>(Expression))
 				{
-					return MakeBinaryValue(
+					return CacheReusableExpressionValue(Key, MakeBinaryValue(
 						TEXT("*"),
 						CompileConnectedOrLiteralValue(Multiply->A, FormatDreamShaderFloat(Multiply->ConstA), TEXT("float"), 1),
-						CompileConnectedOrLiteralValue(Multiply->B, FormatDreamShaderFloat(Multiply->ConstB), TEXT("float"), 1));
+						CompileConnectedOrLiteralValue(Multiply->B, FormatDreamShaderFloat(Multiply->ConstB), TEXT("float"), 1)), Expression);
 				}
 
 				if (UMaterialExpressionDivide* Divide = Cast<UMaterialExpressionDivide>(Expression))
 				{
-					return MakeBinaryValue(
+					return CacheReusableExpressionValue(Key, MakeBinaryValue(
 						TEXT("/"),
 						CompileConnectedOrLiteralValue(Divide->A, FormatDreamShaderFloat(Divide->ConstA), TEXT("float"), 1),
-						CompileConnectedOrLiteralValue(Divide->B, FormatDreamShaderFloat(Divide->ConstB), TEXT("float"), 1));
+						CompileConnectedOrLiteralValue(Divide->B, FormatDreamShaderFloat(Divide->ConstB), TEXT("float"), 1)), Expression);
 				}
 
 				if (UMaterialExpressionLinearInterpolate* Lerp = Cast<UMaterialExpressionLinearInterpolate>(Expression))
@@ -2491,7 +2582,10 @@ namespace UE::DreamShader::Editor::Private
 					FDecompiledValue A = CompileConnectedOrLiteralValue(Lerp->A, FormatDreamShaderFloat(Lerp->ConstA), TEXT("float"), 1);
 					FDecompiledValue B = CompileConnectedOrLiteralValue(Lerp->B, FormatDreamShaderFloat(Lerp->ConstB), TEXT("float"), 1);
 					FDecompiledValue Alpha = CompileConnectedOrLiteralValue(Lerp->Alpha, FormatDreamShaderFloat(Lerp->ConstAlpha), TEXT("float"), 1);
-					return MakeFunctionValue(TEXT("lerp"), { A, B, Alpha }, GetCommonNumericComponentCount(A, B));
+					return CacheReusableExpressionValue(
+						Key,
+						MakeFunctionValue(TEXT("lerp"), { A, B, Alpha }, GetCommonNumericComponentCount(A, B)),
+						Expression);
 				}
 
 				if (UMaterialExpressionClamp* Clamp = Cast<UMaterialExpressionClamp>(Expression))
@@ -2710,12 +2804,15 @@ namespace UE::DreamShader::Editor::Private
 					}
 
 					const FString OutputType = GetDreamShaderTypeForComponentCount(ComponentCount);
-					return MakeExpressionValueWithComponentCount(
-						Expression,
-						OutputIndex,
-						BuildUEExpressionCallWithOutputType(Expression, OutputIndex, OutputType, Arguments),
-						false,
-						ComponentCount);
+					return CacheReusableExpressionValue(
+						Key,
+						MakeExpressionValueWithComponentCount(
+							Expression,
+							OutputIndex,
+							BuildUEExpressionCallWithOutputType(Expression, OutputIndex, OutputType, Arguments),
+							false,
+							ComponentCount),
+						Expression);
 				}
 
 				if (UMaterialExpressionTextureCoordinate* TextureCoordinate = Cast<UMaterialExpressionTextureCoordinate>(Expression))
@@ -2896,6 +2993,49 @@ namespace UE::DreamShader::Editor::Private
 					Key,
 					MakeExpressionValue(Expression, OutputIndex, BuildGenericExpressionCall(Expression, OutputIndex), false),
 					GetMaterialExpressionShortName(Expression->GetClass()));
+			}
+
+			FDecompiledValue CompileNamedRerouteDeclarationValue(
+				UMaterialExpressionNamedRerouteDeclaration* Declaration,
+				const int32 OutputIndex)
+			{
+				if (!Declaration)
+				{
+					return MakeValue(TEXT("0.0"), TEXT("float"), 1, true);
+				}
+
+				const FDecompiledExpressionKey Key{ Declaration, OutputIndex };
+				if (const FDecompiledValue* ExistingValue = ExpressionValues.Find(Key))
+				{
+					return *ExistingValue;
+				}
+
+				if (CompilingNamedRerouteDeclarations.Contains(Declaration))
+				{
+					Warnings.AddUnique(FString::Printf(
+						TEXT("Detected a recursive named reroute dependency for '%s'; emitted a default literal to avoid stack overflow."),
+						*Declaration->Name.ToString()));
+					return MakeDefaultValueForExpressionOutput(Declaration, OutputIndex);
+				}
+
+				CompilingNamedRerouteDeclarations.Add(Declaration);
+				ON_SCOPE_EXIT
+				{
+					CompilingNamedRerouteDeclarations.Remove(Declaration);
+				};
+
+				const FDecompiledValue Value = CompileInputValue(Declaration->Input, MakeDefaultValueForExpressionOutput(Declaration, OutputIndex));
+				const FString TempName = MakeUniqueName(Declaration->Name.ToString(), TEXT("Reroute"));
+				const FString CachedName = AddTempWithName(Value.Type, Value.Text, TempName);
+				return CacheExpressionValue(
+					Key,
+					MakeValue(
+						CachedName,
+						Value.Type,
+						Value.ComponentCount,
+						true,
+						Value.bIsTextureObject,
+						Value.bIsMaterialAttributes));
 			}
 
 			FString MakeExpressionOutputSelection(const FString& ExpressionText, UMaterialExpression* Expression, const int32 OutputIndex) const
@@ -3303,6 +3443,7 @@ namespace UE::DreamShader::Editor::Private
 			TMap<FDecompiledExpressionKey, FString> ExpressionTemps;
 			TMap<FDecompiledExpressionKey, FDecompiledValue> ExpressionValues;
 			TSet<FDecompiledExpressionKey> CompilingExpressionKeys;
+			TSet<const UMaterialExpressionNamedRerouteDeclaration*> CompilingNamedRerouteDeclarations;
 			TSet<FString> TempNames;
 			TArray<FString> VirtualFunctionDefinitions;
 			TMap<const UMaterialFunction*, FString> VirtualFunctionNames;

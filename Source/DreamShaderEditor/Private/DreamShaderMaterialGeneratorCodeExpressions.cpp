@@ -197,6 +197,25 @@ namespace UE::DreamShader::Editor::Private
 
 			EvaluatedValue = CoercedValue;
 		}
+		else
+		{
+			int32 OutputComponentCount = 1;
+			bool bOutputIsTexture = false;
+			if (TryResolveOutputVariableComponentCount(Definition, Statement.TargetName, OutputComponentCount, bOutputIsTexture))
+			{
+				FCodeValue CoercedValue;
+				if (!CoerceValueToType(EvaluatedValue, OutputComponentCount, bOutputIsTexture, CoercedValue, OutError))
+				{
+					OutError = FString::Printf(
+						TEXT("Graph output variable '%s' was assigned an incompatible value. %s"),
+						*Statement.TargetName,
+						*OutError);
+					return false;
+				}
+
+				EvaluatedValue = CoercedValue;
+			}
+		}
 
 		(*Values).Add(Statement.TargetName, EvaluatedValue);
 		return true;
