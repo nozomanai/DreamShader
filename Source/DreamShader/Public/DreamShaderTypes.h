@@ -77,6 +77,36 @@ namespace UE::DreamShader
 		FString DefaultValueText;
 	};
 
+	struct FTextShaderGraphRegion
+	{
+		FString Name;
+		int32 StartLine = 1;
+		int32 EndLine = MAX_int32;
+	};
+
+	struct FTextShaderLayoutNode
+	{
+		FString Var;
+		int32 X = 0;
+		int32 Y = 0;
+	};
+
+	struct FTextShaderLayoutComment
+	{
+		FString Name;
+		int32 X = 0;
+		int32 Y = 0;
+		int32 W = 420;
+		int32 H = 240;
+		FLinearColor Color = FLinearColor(0.10f, 0.16f, 0.22f, 0.35f);
+	};
+
+	struct FTextShaderLayout
+	{
+		TArray<FTextShaderLayoutNode> Nodes;
+		TArray<FTextShaderLayoutComment> Comments;
+	};
+
 	struct FTextShaderFunctionParameter
 	{
 		FString Type;
@@ -114,6 +144,8 @@ namespace UE::DreamShader
 		TMap<FString, FString> Settings;
 		FString Code;
 		int32 CodeStartIndex = INDEX_NONE;
+		TArray<FTextShaderGraphRegion> GraphRegions;
+		FTextShaderLayout Layout;
 		FString HLSL;
 	};
 
@@ -136,6 +168,8 @@ namespace UE::DreamShader
 		TArray<FTextShaderOutputBinding> Outputs;
 		FString Code;
 		int32 CodeStartIndex = INDEX_NONE;
+		TArray<FTextShaderGraphRegion> GraphRegions;
+		FTextShaderLayout Layout;
 		FString HLSL;
 		TArray<FTextShaderFunctionDefinition> Functions;
 		TArray<FTextShaderFunctionDefinition> GraphFunctions;

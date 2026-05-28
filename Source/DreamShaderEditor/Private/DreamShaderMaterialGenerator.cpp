@@ -130,6 +130,38 @@ namespace UE::DreamShader::Editor
 			return false;
 		}
 
+		static FString FindRegionNameForStatement(
+			const TArray<FTextShaderGraphRegion>& Regions,
+			const Private::FCodeStatement& Statement)
+		{
+			if (!Statement.bHasSourceLocation)
+			{
+				return FString();
+			}
+
+			for (const FTextShaderGraphRegion& Region : Regions)
+			{
+				if (Statement.SourceLine >= Region.StartLine && Statement.SourceLine <= Region.EndLine)
+				{
+					return Region.Name;
+				}
+			}
+
+			return FString();
+		}
+
+		static void ApplyStatementRegionsRecursive(
+			TArray<Private::FCodeStatement>& Statements,
+			const TArray<FTextShaderGraphRegion>& Regions)
+		{
+			for (Private::FCodeStatement& Statement : Statements)
+			{
+				Statement.RegionName = FindRegionNameForStatement(Regions, Statement);
+				ApplyStatementRegionsRecursive(Statement.ThenStatements, Regions);
+				ApplyStatementRegionsRecursive(Statement.ElseStatements, Regions);
+			}
+		}
+
 		static bool TryParseFunctionInputPreviewLiteral(
 			const FString& InText,
 			const int32 ComponentCount,
@@ -1551,6 +1583,8 @@ namespace UE::DreamShader::Editor
 			}
 
 			TMap<FString, Private::FCodeValue> GeneratedValues;
+			TMap<FString, UMaterialExpression*> GeneratedExpressionsByVariable;
+			TMap<FString, FString> RegionByVariable;
 			TSet<FString> SeenPropertyNames;
 			for (const FTextShaderPropertyDefinition& Property : FunctionDefinition.Properties)
 			{
@@ -1634,6 +1668,7 @@ namespace UE::DreamShader::Editor
 				InputValue.bIsMaterialAttributes = ComponentCount == 0 && !bIsTextureObject;
 				GeneratedValues.Add(InputDefinition.Name, InputValue);
 				GeneratedInputExpressions.Add(InputDefinition.Name, InputExpression);
+				GeneratedExpressionsByVariable.Add(InputDefinition.Name, InputExpression);
 				InputPositionY += 180;
 			}
 
@@ -1709,6 +1744,7 @@ namespace UE::DreamShader::Editor
 						CodeParseErrorColumn);
 					return false;
 				}
+				ApplyStatementRegionsRecursive(CodeStatements, FunctionDefinition.GraphRegions);
 
 				Private::FCodeGraphBuilder CodeGraphBuilder(
 					nullptr,
@@ -1727,6 +1763,8 @@ namespace UE::DreamShader::Editor
 					OutError = CodeBuildError;
 					return false;
 				}
+				GeneratedExpressionsByVariable.Append(CodeGraphBuilder.GetGeneratedExpressionsByVariable());
+				RegionByVariable = CodeGraphBuilder.GetRegionByVariable();
 			}
 			else
 			{
@@ -1921,11 +1959,17 @@ namespace UE::DreamShader::Editor
 					OutputDefinition.Name,
 					OutputIndex);
 				Private::ConnectCodeValueToInput(OutputExpression->A, RoutedOutputValue);
+				GeneratedExpressionsByVariable.Add(OutputDefinition.Name, OutputExpression);
 				OutputPositionY += 180;
 			}
 
 			FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Laying out '%s'..."), *FunctionDefinition.Name)));
-			Private::LayoutGeneratedExpressions(nullptr, MaterialFunction);
+			Private::LayoutGeneratedExpressions(
+				nullptr,
+				MaterialFunction,
+				&FunctionDefinition.Layout,
+				GeneratedExpressionsByVariable.IsEmpty() ? nullptr : &GeneratedExpressionsByVariable,
+				RegionByVariable.IsEmpty() ? nullptr : &RegionByVariable);
 			FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Updating '%s'..."), *FunctionDefinition.Name)));
 			UMaterialEditingLibrary::UpdateMaterialFunction(MaterialFunction, nullptr);
 			MaterialFunction->PostEditChange();
@@ -2173,6 +2217,8 @@ namespace UE::DreamShader::Editor
 		TMap<FString, UMaterialExpression*> GeneratedOutputTargetExpressions;
 		TSet<FString> BoundOutputTargetPins;
 		TMap<FString, Private::FCodeValue> GeneratedCodeValues;
+		TMap<FString, UMaterialExpression*> GeneratedExpressionsByVariable;
+		TMap<FString, FString> RegionByVariable;
 		int32 OutputTargetPositionY = 200;
 		TSet<FString> SeenPropertyNames;
 		for (const FTextShaderPropertyDefinition& Property : Definition.Properties)
@@ -2266,6 +2312,7 @@ namespace UE::DreamShader::Editor
 					CodeParseErrorColumn);
 				return false;
 			}
+			ApplyStatementRegionsRecursive(GraphStatements, Definition.GraphRegions);
 			CodeStatements.Append(GraphStatements);
 
 			Private::FCodeGraphBuilder CodeGraphBuilder(
@@ -2285,6 +2332,8 @@ namespace UE::DreamShader::Editor
 				OutMessage = FormatGenerateError(SourceFilePath, CodeBuildError);
 				return false;
 			}
+			GeneratedExpressionsByVariable = CodeGraphBuilder.GetGeneratedExpressionsByVariable();
+			RegionByVariable = CodeGraphBuilder.GetRegionByVariable();
 
 			MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Connecting material outputs for '%s'..."), *Definition.Name)));
 			for (const FTextShaderOutputBinding& Binding : Definition.Outputs)
@@ -2535,7 +2584,12 @@ namespace UE::DreamShader::Editor
 		}
 
 		MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Laying out material graph '%s'..."), *Material->GetName())));
-		Private::LayoutGeneratedExpressions(Material, nullptr);
+		Private::LayoutGeneratedExpressions(
+			Material,
+			nullptr,
+			&Definition.Layout,
+			GeneratedExpressionsByVariable.IsEmpty() ? nullptr : &GeneratedExpressionsByVariable,
+			RegionByVariable.IsEmpty() ? nullptr : &RegionByVariable);
 		MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Compiling material '%s'..."), *Material->GetName())));
 		UMaterialEditingLibrary::RecompileMaterial(Material);
 		Material->PostEditChange();

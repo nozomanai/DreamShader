@@ -108,6 +108,20 @@ namespace UE::DreamShader::Editor::Private
 		return FString::Printf(TEXT("%s(%d,%d): %s"), *CodeSourceFilePath, Line, Column, *Error);
 	}
 
+	void FCodeGraphBuilder::RegisterGeneratedVariable(const FCodeStatement& Statement, const FCodeValue& Value)
+	{
+		if (Statement.TargetName.IsEmpty() || !Value.Expression)
+		{
+			return;
+		}
+
+		GeneratedExpressionsByVariable.Add(Statement.TargetName, Value.Expression);
+		if (!Statement.RegionName.IsEmpty())
+		{
+			RegionByVariable.Add(Statement.TargetName, Statement.RegionName);
+		}
+	}
+
 	bool FCodeGraphBuilder::ExecuteStatement(const FCodeStatement& Statement, FString& OutError)
 	{
 		if (Statement.bIsIfStatement)
@@ -266,6 +280,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		(*Values).Add(Statement.TargetName, EvaluatedValue);
+		RegisterGeneratedVariable(Statement, EvaluatedValue);
 		return true;
 	}
 
@@ -2645,6 +2660,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		GeneratedPropertyExpressions.Add(Property->Name, PropertyExpression);
+		GeneratedExpressionsByVariable.Add(Property->Name, PropertyExpression);
 
 		OutValue = FCodeValue{};
 		OutValue.Expression = PropertyExpression;

@@ -37,6 +37,7 @@
 #include "Materials/MaterialExpressionCeil.h"
 #include "Materials/MaterialExpressionClamp.h"
 #include "Materials/MaterialExpressionComponentMask.h"
+#include "Materials/MaterialExpressionComment.h"
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionConstant2Vector.h"
 #include "Materials/MaterialExpressionConstant3Vector.h"
@@ -1183,6 +1184,7 @@ namespace UE::DreamShader::Editor::Private
 				{
 					ActiveDecompileSlowTask = nullptr;
 				};
+				CollectLayoutComments(Material);
 
 				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Scanning material outputs for '%s'..."), *Material->GetName())));
 				TArray<FString> OutputDeclarations;
@@ -1243,6 +1245,7 @@ namespace UE::DreamShader::Editor::Private
 
 					OutputAssignments.Add(FormatGraphSetStatement(Binding.Name, CompileInput(*MaterialInput, Binding.DefaultValue)));
 				}
+				FinalizeGraphLayoutMetadata();
 
 				TArray<FString> Lines;
 				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Formatting DSM source for '%s'..."), *Material->GetName())));
@@ -1270,7 +1273,11 @@ namespace UE::DreamShader::Editor::Private
 				Lines.Add(TEXT("\t}"));
 				Lines.Add(TEXT(""));
 				AppendSection(Lines, TEXT("Outputs"), OutputDeclarations, OutputBindings);
-				AppendSection(Lines, TEXT("Graph"), GraphLines, OutputAssignments);
+				AppendSection(Lines, TEXT("Graph"), BuildRegionizedGraphLines(GraphLines), OutputAssignments);
+				if (!LayoutLines.IsEmpty())
+				{
+					AppendSection(Lines, TEXT("Layout"), LayoutLines);
+				}
 				Lines.Add(TEXT("}"));
 
 				OutSourceText = FString::Join(Lines, TEXT("\n"));
@@ -1303,6 +1310,7 @@ namespace UE::DreamShader::Editor::Private
 				{
 					ActiveDecompileSlowTask = nullptr;
 				};
+				CollectLayoutComments(MaterialFunction);
 
 				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Scanning function inputs and outputs for '%s'..."), *MaterialFunction->GetName())));
 				TArray<FFunctionExpressionInput> Inputs;
@@ -1339,6 +1347,7 @@ namespace UE::DreamShader::Editor::Private
 					if (InputExpression)
 					{
 						FunctionInputNames.Add(InputExpression, DeclarationName);
+						RegisterExpressionName(InputExpression, DeclarationName);
 					}
 					InputDeclarations.Add(FString::Printf(
 						TEXT("\t\t%s%s %s%s%s;"),
@@ -1383,7 +1392,12 @@ namespace UE::DreamShader::Editor::Private
 					{
 						OutputAssignments.Add(FormatGraphSetStatement(DeclarationName, CompileInput(OutputExpression->A, TEXT("0.0"))));
 					}
+					if (OutputExpression)
+					{
+						RegisterExpressionName(OutputExpression, DeclarationName);
+					}
 				}
+				FinalizeGraphLayoutMetadata();
 
 				TArray<FString> Lines;
 				DecompileSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Formatting DSF source for '%s'..."), *MaterialFunction->GetName())));
@@ -1416,7 +1430,11 @@ namespace UE::DreamShader::Editor::Private
 				AppendSection(Lines, TEXT("Properties"), PropertyDeclarations);
 				AppendSection(Lines, TEXT("Inputs"), InputDeclarations);
 				AppendSection(Lines, TEXT("Outputs"), OutputDeclarations);
-				AppendSection(Lines, TEXT("Graph"), GraphLines, OutputAssignments);
+				AppendSection(Lines, TEXT("Graph"), BuildRegionizedGraphLines(GraphLines), OutputAssignments);
+				if (!LayoutLines.IsEmpty())
+				{
+					AppendSection(Lines, TEXT("Layout"), LayoutLines);
+				}
 				Lines.Add(TEXT("}"));
 
 				OutSourceText = FString::Join(Lines, TEXT("\n"));
@@ -1431,6 +1449,16 @@ namespace UE::DreamShader::Editor::Private
 				bool bInput = false;
 			};
 
+			struct FDecompiledGraphLayoutComment
+			{
+				FString Name;
+				int32 X = 0;
+				int32 Y = 0;
+				int32 W = 0;
+				int32 H = 0;
+				FLinearColor Color = FLinearColor(0.10f, 0.16f, 0.22f, 0.35f);
+			};
+
 			void Reset()
 			{
 				PropertyDeclarations.Reset();
@@ -1438,6 +1466,10 @@ namespace UE::DreamShader::Editor::Private
 				ReservedNames.Reset();
 				FunctionInputNames.Reset();
 				GraphLines.Reset();
+				LayoutLines.Reset();
+				ExpressionNames.Reset();
+				ExpressionRegionNames.Reset();
+				LayoutComments.Reset();
 				ExpressionTemps.Reset();
 				ExpressionValues.Reset();
 				TempNames.Reset();
@@ -1955,6 +1987,28 @@ namespace UE::DreamShader::Editor::Private
 				return Name;
 			}
 
+			void RegisterExpressionName(UMaterialExpression* Expression, const FString& Name)
+			{
+				if (Expression && !Name.TrimStartAndEnd().IsEmpty())
+				{
+					ExpressionNames.Add(Expression, Name);
+				}
+			}
+
+			FString AddTempForExpression(UMaterialExpression* Expression, const FString& Type, const FString& ExpressionText, const FString& BaseName)
+			{
+				const FString Name = AddTemp(Type, ExpressionText, BaseName);
+				RegisterExpressionName(Expression, Name);
+				return Name;
+			}
+
+			FString AddTempWithNameForExpression(UMaterialExpression* Expression, const FString& Type, const FString& ExpressionText, const FString& Name)
+			{
+				const FString TempName = AddTempWithName(Type, ExpressionText, Name);
+				RegisterExpressionName(Expression, TempName);
+				return TempName;
+			}
+
 			static FString FormatGraphAssignment(const FString& Type, const FString& Name, const FString& ExpressionText)
 			{
 				if (ExpressionText.Contains(TEXT("\n")))
@@ -1973,6 +2027,243 @@ namespace UE::DreamShader::Editor::Private
 				}
 
 				return FString::Printf(TEXT("\t\t%s = %s;"), *TargetName, *ExpressionText);
+			}
+
+			static bool IsExpressionInsideComment(const UMaterialExpression* Expression, const FDecompiledGraphLayoutComment& Comment)
+			{
+				if (!Expression)
+				{
+					return false;
+				}
+
+				const int32 X = Expression->MaterialExpressionEditorX;
+				const int32 Y = Expression->MaterialExpressionEditorY;
+				return X >= Comment.X
+					&& Y >= Comment.Y
+					&& X <= Comment.X + Comment.W
+					&& Y <= Comment.Y + Comment.H;
+			}
+
+			FString FindBestRegionForExpression(const UMaterialExpression* Expression) const
+			{
+				const FDecompiledGraphLayoutComment* BestComment = nullptr;
+				int32 BestArea = MAX_int32;
+				for (const FDecompiledGraphLayoutComment& Comment : LayoutComments)
+				{
+					if (!IsExpressionInsideComment(Expression, Comment))
+					{
+						continue;
+					}
+
+					const int32 Area = FMath::Max(1, Comment.W) * FMath::Max(1, Comment.H);
+					if (!BestComment || Area < BestArea)
+					{
+						BestComment = &Comment;
+						BestArea = Area;
+					}
+				}
+
+				return BestComment ? BestComment->Name : FString();
+			}
+
+			void BuildLayoutLines()
+			{
+				LayoutLines.Reset();
+				for (const FDecompiledGraphLayoutComment& Comment : LayoutComments)
+				{
+					LayoutLines.Add(FString::Printf(
+						TEXT("\t\tComment(Name=\"%s\", X=%d, Y=%d, W=%d, H=%d, Color=float4(%s, %s, %s, %s));"),
+						*EscapeDreamShaderString(Comment.Name),
+						Comment.X,
+						Comment.Y,
+						Comment.W,
+						Comment.H,
+						*FormatDreamShaderFloat(Comment.Color.R),
+						*FormatDreamShaderFloat(Comment.Color.G),
+						*FormatDreamShaderFloat(Comment.Color.B),
+						*FormatDreamShaderFloat(Comment.Color.A)));
+				}
+
+				TArray<const UMaterialExpression*> SortedExpressions;
+				ExpressionNames.GenerateKeyArray(SortedExpressions);
+				SortedExpressions.StableSort([this](const UMaterialExpression& Left, const UMaterialExpression& Right)
+				{
+					const FString LeftName = ExpressionNames.FindRef(&Left);
+					const FString RightName = ExpressionNames.FindRef(&Right);
+					if (Left.MaterialExpressionEditorX != Right.MaterialExpressionEditorX)
+					{
+						return Left.MaterialExpressionEditorX < Right.MaterialExpressionEditorX;
+					}
+					if (Left.MaterialExpressionEditorY != Right.MaterialExpressionEditorY)
+					{
+						return Left.MaterialExpressionEditorY < Right.MaterialExpressionEditorY;
+					}
+					return LeftName.Compare(RightName, ESearchCase::CaseSensitive) < 0;
+				});
+
+				for (const UMaterialExpression* Expression : SortedExpressions)
+				{
+					const FString Name = ExpressionNames.FindRef(Expression);
+					if (!Expression || Name.TrimStartAndEnd().IsEmpty())
+					{
+						continue;
+					}
+
+					LayoutLines.Add(FString::Printf(
+						TEXT("\t\tNode(Var=\"%s\", X=%d, Y=%d);"),
+						*EscapeDreamShaderString(Name),
+						Expression->MaterialExpressionEditorX,
+						Expression->MaterialExpressionEditorY));
+				}
+			}
+
+			TArray<FString> BuildRegionizedGraphLines(const TArray<FString>& RawGraphLines)
+			{
+				if (RawGraphLines.IsEmpty() || ExpressionRegionNames.IsEmpty())
+				{
+					return RawGraphLines;
+				}
+
+				TArray<FString> Lines;
+				FString ActiveRegion;
+				for (const FString& Line : RawGraphLines)
+				{
+					FString RegionName;
+					FString DeclaredName;
+					if (TryExtractGraphAssignmentName(Line, DeclaredName))
+					{
+						if (const FString* FoundRegion = ExpressionRegionNames.Find(DeclaredName))
+						{
+							RegionName = *FoundRegion;
+						}
+					}
+
+					if (!RegionName.Equals(ActiveRegion, ESearchCase::CaseSensitive))
+					{
+						if (!ActiveRegion.IsEmpty())
+						{
+							Lines.Add(TEXT("\t\t#EndRegion"));
+							Lines.Add(TEXT(""));
+						}
+						if (!RegionName.IsEmpty())
+						{
+							Lines.Add(FString::Printf(TEXT("\t\t#Region \"%s\""), *EscapeDreamShaderString(RegionName)));
+						}
+						ActiveRegion = RegionName;
+					}
+
+					Lines.Add(Line);
+				}
+
+				if (!ActiveRegion.IsEmpty())
+				{
+					Lines.Add(TEXT("\t\t#EndRegion"));
+				}
+
+				return Lines;
+			}
+
+			static bool TryExtractGraphAssignmentName(const FString& Line, FString& OutName)
+			{
+				FString Trimmed = Line.TrimStartAndEnd();
+				if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT("#")))
+				{
+					return false;
+				}
+
+				FString Left;
+				FString Right;
+				if (!Trimmed.Split(TEXT("="), &Left, &Right, ESearchCase::CaseSensitive))
+				{
+					return false;
+				}
+
+				Left.TrimStartAndEndInline();
+				TArray<FString> Tokens;
+				Left.ParseIntoArrayWS(Tokens);
+				if (Tokens.Num() < 2)
+				{
+					return false;
+				}
+
+				OutName = Tokens.Last().TrimStartAndEnd();
+				return !OutName.IsEmpty();
+			}
+
+			void CollectLayoutComments(UMaterial* Material)
+			{
+				LayoutComments.Reset();
+				if (!Material)
+				{
+					return;
+				}
+
+				for (const TObjectPtr<UMaterialExpressionComment>& Comment : Material->GetEditorComments())
+				{
+					if (!Comment)
+					{
+						continue;
+					}
+					if (Comment->Text.StartsWith(TEXT("DreamShader: "), ESearchCase::CaseSensitive))
+					{
+						continue;
+					}
+
+					FDecompiledGraphLayoutComment& LayoutComment = LayoutComments.AddDefaulted_GetRef();
+					LayoutComment.Name = Comment->Text;
+					LayoutComment.X = Comment->MaterialExpressionEditorX;
+					LayoutComment.Y = Comment->MaterialExpressionEditorY;
+					LayoutComment.W = Comment->SizeX;
+					LayoutComment.H = Comment->SizeY;
+					LayoutComment.Color = Comment->CommentColor;
+				}
+			}
+
+			void CollectLayoutComments(UMaterialFunction* MaterialFunction)
+			{
+				LayoutComments.Reset();
+				if (!MaterialFunction)
+				{
+					return;
+				}
+
+				for (const TObjectPtr<UMaterialExpressionComment>& Comment : MaterialFunction->GetEditorComments())
+				{
+					if (!Comment)
+					{
+						continue;
+					}
+					if (Comment->Text.StartsWith(TEXT("DreamShader: "), ESearchCase::CaseSensitive))
+					{
+						continue;
+					}
+
+					FDecompiledGraphLayoutComment& LayoutComment = LayoutComments.AddDefaulted_GetRef();
+					LayoutComment.Name = Comment->Text;
+					LayoutComment.X = Comment->MaterialExpressionEditorX;
+					LayoutComment.Y = Comment->MaterialExpressionEditorY;
+					LayoutComment.W = Comment->SizeX;
+					LayoutComment.H = Comment->SizeY;
+					LayoutComment.Color = Comment->CommentColor;
+				}
+			}
+
+			void FinalizeGraphLayoutMetadata()
+			{
+				ExpressionRegionNames.Reset();
+				for (const TPair<const UMaterialExpression*, FString>& Pair : ExpressionNames)
+				{
+					const FString RegionName = FindBestRegionForExpression(Pair.Key);
+					if (!RegionName.IsEmpty())
+					{
+						ExpressionRegionNames.Add(Pair.Value, RegionName);
+					}
+				}
+
+				if (const UDreamShaderSettings* Settings = GetDefault<UDreamShaderSettings>(); !Settings || Settings->bExportDecompiledLayout)
+				{
+					BuildLayoutLines();
+				}
 			}
 
 			static FString IndentMultiline(const FString& Text, const TCHAR* Indent)
@@ -2043,12 +2334,40 @@ namespace UE::DreamShader::Editor::Private
 
 			FDecompiledValue CacheTempExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, const FString& BaseName)
 			{
-				return CacheExpressionValue(Key, AddTempValue(Value, BaseName));
+				if (Value.bIsSimple)
+				{
+					return CacheExpressionValue(Key, Value);
+				}
+
+				const FString Name = AddTempForExpression(Key.Expression ? const_cast<UMaterialExpression*>(Key.Expression) : nullptr, Value.Type, Value.Text, BaseName);
+				return CacheExpressionValue(
+					Key,
+					MakeValue(
+						Name,
+						Value.Type,
+						Value.ComponentCount,
+						true,
+						Value.bIsTextureObject,
+						Value.bIsMaterialAttributes));
 			}
 
 			FDecompiledValue CacheNamedTempExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, const FString& Name)
 			{
-				return CacheExpressionValue(Key, AddTempValueWithName(Value, Name));
+				if (Value.bIsSimple)
+				{
+					return CacheExpressionValue(Key, Value);
+				}
+
+				const FString TempName = AddTempWithNameForExpression(Key.Expression ? const_cast<UMaterialExpression*>(Key.Expression) : nullptr, Value.Type, Value.Text, Name);
+				return CacheExpressionValue(
+					Key,
+					MakeValue(
+						TempName,
+						Value.Type,
+						Value.ComponentCount,
+						true,
+						Value.bIsTextureObject,
+						Value.bIsMaterialAttributes));
 			}
 
 			FDecompiledValue CacheReusableExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, UMaterialExpression* Expression)
@@ -2440,6 +2759,7 @@ namespace UE::DreamShader::Editor::Private
 							*Name,
 							*FormatDreamShaderFloat(ScalarParameter->DefaultValue),
 							*BuildMetadataSuffix(MetadataEntries)));
+					RegisterExpressionName(Expression, Name);
 					return MakeValue(Name, TEXT("float"), 1, true);
 				}
 
@@ -2456,6 +2776,7 @@ namespace UE::DreamShader::Editor::Private
 							*Name,
 							*FormatDreamShaderColor(VectorParameter->DefaultValue),
 							*BuildMetadataSuffix(MetadataEntries)));
+					RegisterExpressionName(Expression, Name);
 					return MakeExpressionOutputValue(MakeExpressionValue(Expression, 0, Name, true), Expression, OutputIndex);
 				}
 
@@ -2476,6 +2797,7 @@ namespace UE::DreamShader::Editor::Private
 							*Name,
 							*DefaultValue,
 							*BuildMetadataSuffix(MetadataEntries)));
+					RegisterExpressionName(Expression, Name);
 					return MakeValue(Name, TEXT("Texture2D"), 0, true, true);
 				}
 
@@ -2525,6 +2847,7 @@ namespace UE::DreamShader::Editor::Private
 							*Name,
 							*DefaultValue,
 							*BuildMetadataSuffix(MetadataEntries)));
+					RegisterExpressionName(Expression, Name);
 					const int32 RgbaOutputIndex = FindExpressionOutputIndexByName(Expression, TEXT("RGBA"), 0);
 					return MakeExpressionOutputValue(MakeExpressionValue(Expression, RgbaOutputIndex, Name, true), Expression, OutputIndex);
 				}
@@ -3444,6 +3767,10 @@ namespace UE::DreamShader::Editor::Private
 			TSet<FString> ReservedNames;
 			TMap<const UMaterialExpressionFunctionInput*, FString> FunctionInputNames;
 			TArray<FString> GraphLines;
+			TArray<FString> LayoutLines;
+			TMap<const UMaterialExpression*, FString> ExpressionNames;
+			TMap<FString, FString> ExpressionRegionNames;
+			TArray<FDecompiledGraphLayoutComment> LayoutComments;
 			TMap<FDecompiledExpressionKey, FString> ExpressionTemps;
 			TMap<FDecompiledExpressionKey, FDecompiledValue> ExpressionValues;
 			TSet<FDecompiledExpressionKey> CompilingExpressionKeys;

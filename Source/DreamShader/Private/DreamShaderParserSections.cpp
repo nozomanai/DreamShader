@@ -1051,6 +1051,256 @@ namespace UE::DreamShader::Private
 		return true;
 	}
 
+	static bool ParseLayoutCallStatement(
+		const FString& Statement,
+		FString& OutCallName,
+		TMap<FString, FString>& OutArguments,
+		FString& OutError)
+	{
+		const FString Trimmed = Statement.TrimStartAndEnd();
+		const int32 OpenParenIndex = Trimmed.Find(TEXT("("));
+		const int32 CloseParenIndex = Trimmed.Find(TEXT(")"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+		if (OpenParenIndex == INDEX_NONE || CloseParenIndex == INDEX_NONE || CloseParenIndex <= OpenParenIndex)
+		{
+			OutError = FString::Printf(TEXT("Invalid Layout statement '%s'."), *Statement);
+			return false;
+		}
+
+		if (!Trimmed.Mid(CloseParenIndex + 1).TrimStartAndEnd().IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Unexpected text after Layout statement '%s'."), *Statement);
+			return false;
+		}
+
+		OutCallName = Trimmed.Left(OpenParenIndex).TrimStartAndEnd();
+		if (!IsIdentifierToken(OutCallName))
+		{
+			OutError = FString::Printf(TEXT("Invalid Layout statement name in '%s'."), *Statement);
+			return false;
+		}
+
+		OutArguments.Reset();
+		const FString ArgumentBlock = Trimmed.Mid(OpenParenIndex + 1, CloseParenIndex - OpenParenIndex - 1).TrimStartAndEnd();
+		for (const FString& ArgumentStatement : SplitTopLevelDelimited(ArgumentBlock, TCHAR(',')))
+		{
+			FString ArgumentName;
+			FString ArgumentValue;
+			if (!SplitTopLevelAssignment(ArgumentStatement, ArgumentName, ArgumentValue))
+			{
+				OutError = FString::Printf(TEXT("Layout argument '%s' must use Key=Value syntax."), *ArgumentStatement);
+				return false;
+			}
+
+			ArgumentName = NormalizeSettingKey(ArgumentName);
+			ArgumentValue = Unquote(ArgumentValue).TrimStartAndEnd();
+			if (ArgumentName.IsEmpty() || ArgumentValue.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("Invalid Layout argument '%s'."), *ArgumentStatement);
+				return false;
+			}
+
+			if (OutArguments.Contains(ArgumentName))
+			{
+				OutError = FString::Printf(TEXT("Layout argument '%s' is declared more than once."), *ArgumentName);
+				return false;
+			}
+
+			OutArguments.Add(ArgumentName, ArgumentValue);
+		}
+
+		return true;
+	}
+
+	static bool TryGetRequiredLayoutTextArgument(
+		const TMap<FString, FString>& Arguments,
+		const TCHAR* Name,
+		FString& OutValue,
+		FString& OutError)
+	{
+		const FString* Value = Arguments.Find(NormalizeSettingKey(Name));
+		if (!Value || Value->TrimStartAndEnd().IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Layout argument '%s' is required."), Name);
+			return false;
+		}
+
+		OutValue = Value->TrimStartAndEnd();
+		return true;
+	}
+
+	static bool TryGetRequiredLayoutIntArgument(
+		const TMap<FString, FString>& Arguments,
+		const TCHAR* Name,
+		int32& OutValue,
+		FString& OutError)
+	{
+		const FString* Value = Arguments.Find(NormalizeSettingKey(Name));
+		if (!Value || !ParseIntegerLiteral(*Value, OutValue))
+		{
+			OutError = FString::Printf(TEXT("Layout argument '%s' must be an integer."), Name);
+			return false;
+		}
+
+		return true;
+	}
+
+	bool ParseLayoutStatements(const FString& BlockContent, FTextShaderLayout& OutLayout, FString& OutError)
+	{
+		OutLayout = FTextShaderLayout{};
+		const TArray<FString> Statements = SplitStatements(RemoveComments(BlockContent));
+		for (const FString& Statement : Statements)
+		{
+			const FString Trimmed = Statement.TrimStartAndEnd();
+			if (Trimmed.IsEmpty())
+			{
+				continue;
+			}
+
+			FString CallName;
+			TMap<FString, FString> Arguments;
+			if (!ParseLayoutCallStatement(Trimmed, CallName, Arguments, OutError))
+			{
+				return false;
+			}
+
+			if (CallName.Equals(TEXT("Node"), ESearchCase::IgnoreCase))
+			{
+				FTextShaderLayoutNode Node;
+				if (!TryGetRequiredLayoutTextArgument(Arguments, TEXT("Var"), Node.Var, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("X"), Node.X, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("Y"), Node.Y, OutError))
+				{
+					OutError = FString::Printf(TEXT("Invalid Layout Node statement '%s'. %s"), *Trimmed, *OutError);
+					return false;
+				}
+
+				OutLayout.Nodes.Add(Node);
+				continue;
+			}
+
+			if (CallName.Equals(TEXT("Comment"), ESearchCase::IgnoreCase))
+			{
+				FTextShaderLayoutComment Comment;
+				if (!TryGetRequiredLayoutTextArgument(Arguments, TEXT("Name"), Comment.Name, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("X"), Comment.X, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("Y"), Comment.Y, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("W"), Comment.W, OutError)
+					|| !TryGetRequiredLayoutIntArgument(Arguments, TEXT("H"), Comment.H, OutError))
+				{
+					OutError = FString::Printf(TEXT("Invalid Layout Comment statement '%s'. %s"), *Trimmed, *OutError);
+					return false;
+				}
+
+				if (const FString* ColorText = Arguments.Find(NormalizeSettingKey(TEXT("Color"))))
+				{
+					if (!ParseVectorLiteral(*ColorText, Comment.Color))
+					{
+						OutError = FString::Printf(TEXT("Layout Comment Color must be a float4 literal in '%s'."), *Trimmed);
+						return false;
+					}
+				}
+
+				OutLayout.Comments.Add(Comment);
+				continue;
+			}
+
+			OutError = FString::Printf(TEXT("Unknown Layout statement '%s'."), *CallName);
+			return false;
+		}
+
+		return true;
+	}
+
+	static FString ParseRegionDirectiveName(const FString& Line, const TCHAR* Directive)
+	{
+		FString Trimmed = Line.TrimStartAndEnd();
+		Trimmed.RightChopInline(FCString::Strlen(Directive), EAllowShrinking::No);
+		Trimmed.TrimStartAndEndInline();
+		return Unquote(Trimmed).TrimStartAndEnd();
+	}
+
+	static bool IsGraphDirective(const FString& TrimmedLine, const TCHAR* Directive)
+	{
+		const int32 DirectiveLength = FCString::Strlen(Directive);
+		return TrimmedLine.Left(DirectiveLength).Equals(Directive, ESearchCase::IgnoreCase)
+			&& (TrimmedLine.Len() == DirectiveLength || FChar::IsWhitespace(TrimmedLine[DirectiveLength]) || TrimmedLine[DirectiveLength] == TCHAR('"'));
+	}
+
+	bool ExtractGraphRegions(
+		const FString& InCode,
+		FString& OutCode,
+		TArray<FTextShaderGraphRegion>& OutRegions,
+		FString& OutError)
+	{
+		OutCode.Reset();
+		OutRegions.Reset();
+
+		struct FOpenRegion
+		{
+			FString Name;
+			int32 StartLine = 1;
+		};
+
+		TArray<FOpenRegion> OpenRegions;
+		TArray<FString> Lines;
+		InCode.ParseIntoArrayLines(Lines, false);
+		if (Lines.IsEmpty() && !InCode.IsEmpty())
+		{
+			Lines.Add(InCode);
+		}
+
+		for (int32 LineIndex = 0; LineIndex < Lines.Num(); ++LineIndex)
+		{
+			const int32 LineNumber = LineIndex + 1;
+			const FString& Line = Lines[LineIndex];
+			const FString Trimmed = Line.TrimStartAndEnd();
+			if (IsGraphDirective(Trimmed, TEXT("#Region")))
+			{
+				const FString Name = ParseRegionDirectiveName(Trimmed, TEXT("#Region"));
+				if (Name.IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("Graph #Region on line %d must include a name."), LineNumber);
+					return false;
+				}
+
+				OpenRegions.Add({ Name, LineNumber + 1 });
+				OutCode += FString::ChrN(Line.Len(), TCHAR(' '));
+			}
+			else if (IsGraphDirective(Trimmed, TEXT("#EndRegion")))
+			{
+				if (OpenRegions.IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("Graph #EndRegion on line %d has no matching #Region."), LineNumber);
+					return false;
+				}
+
+				FOpenRegion OpenRegion = OpenRegions.Pop(EAllowShrinking::No);
+				FTextShaderGraphRegion& Region = OutRegions.AddDefaulted_GetRef();
+				Region.Name = OpenRegion.Name;
+				Region.StartLine = OpenRegion.StartLine;
+				Region.EndLine = FMath::Max(OpenRegion.StartLine, LineNumber - 1);
+				OutCode += FString::ChrN(Line.Len(), TCHAR(' '));
+			}
+			else
+			{
+				OutCode += Line;
+			}
+
+			if (LineIndex + 1 < Lines.Num() || InCode.EndsWith(TEXT("\n")))
+			{
+				OutCode += TEXT("\n");
+			}
+		}
+
+		if (!OpenRegions.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Graph #Region '%s' is missing #EndRegion."), *OpenRegions.Last().Name);
+			return false;
+		}
+
+		return true;
+	}
+
 	bool ParseTypedParameterStatements(const FString& BlockContent, TArray<FTextShaderFunctionParameter>& OutParameters, FString& OutError)
 	{
 		const TArray<FString> Statements = SplitStatements(RemoveComments(BlockContent));
@@ -1110,6 +1360,33 @@ namespace UE::DreamShader::Private
 		return Index;
 	}
 
+	static int32 CountLinesBeforeIndex(const FString& Text, const int32 TargetIndex)
+	{
+		int32 LineCount = 0;
+		for (int32 Index = 0; Index < TargetIndex && Text.IsValidIndex(Index); ++Index)
+		{
+			if (Text[Index] == TCHAR('\n'))
+			{
+				++LineCount;
+			}
+		}
+		return LineCount;
+	}
+
+	static void AdjustRegionsForTrim(TArray<FTextShaderGraphRegion>& Regions, const int32 TrimLineDelta)
+	{
+		if (TrimLineDelta <= 0)
+		{
+			return;
+		}
+
+		for (FTextShaderGraphRegion& Region : Regions)
+		{
+			Region.StartLine = FMath::Max(1, Region.StartLine - TrimLineDelta);
+			Region.EndLine = FMath::Max(Region.StartLine, Region.EndLine - TrimLineDelta);
+		}
+	}
+
 	bool ParseShaderBody(const FString& BodyContent, const int32 BodyContentStartIndex, FTextShaderDefinition& OutDefinition, FString& OutError)
 	{
 		FScanner Scanner(BodyContent);
@@ -1162,8 +1439,27 @@ namespace UE::DreamShader::Private
 			}
 			else if (SectionName.Equals(TEXT("Graph"), ESearchCase::IgnoreCase))
 			{
-				OutDefinition.Code = SectionBody.TrimStartAndEnd();
-				OutDefinition.CodeStartIndex = BodyContentStartIndex + SectionBodyStartIndex + GetTrimStartDelta(SectionBody);
+				FString RegionError;
+				FString CodeWithRegionDirectivesRemoved;
+				if (!ExtractGraphRegions(SectionBody, CodeWithRegionDirectivesRemoved, OutDefinition.GraphRegions, RegionError))
+				{
+					OutError = RegionError;
+					return false;
+				}
+
+				const int32 TrimDelta = GetTrimStartDelta(CodeWithRegionDirectivesRemoved);
+				const int32 TrimLineDelta = CountLinesBeforeIndex(CodeWithRegionDirectivesRemoved, TrimDelta);
+				AdjustRegionsForTrim(OutDefinition.GraphRegions, TrimLineDelta);
+
+				OutDefinition.Code = CodeWithRegionDirectivesRemoved.TrimStartAndEnd();
+				OutDefinition.CodeStartIndex = BodyContentStartIndex + SectionBodyStartIndex + TrimDelta;
+			}
+			else if (SectionName.Equals(TEXT("Layout"), ESearchCase::IgnoreCase))
+			{
+				if (!ParseLayoutStatements(SectionBody, OutDefinition.Layout, OutError))
+				{
+					return false;
+				}
 			}
 			else if (SectionName.Equals(TEXT("Code"), ESearchCase::IgnoreCase))
 			{
@@ -1297,8 +1593,27 @@ namespace UE::DreamShader::Private
 			}
 			else if (SectionName.Equals(TEXT("Graph"), ESearchCase::IgnoreCase))
 			{
-				OutFunction.Code = SectionBody.TrimStartAndEnd();
-				OutFunction.CodeStartIndex = BodyContentStartIndex + SectionBodyStartIndex + GetTrimStartDelta(SectionBody);
+				FString RegionError;
+				FString CodeWithRegionDirectivesRemoved;
+				if (!ExtractGraphRegions(SectionBody, CodeWithRegionDirectivesRemoved, OutFunction.GraphRegions, RegionError))
+				{
+					OutError = RegionError;
+					return false;
+				}
+
+				const int32 TrimDelta = GetTrimStartDelta(CodeWithRegionDirectivesRemoved);
+				const int32 TrimLineDelta = CountLinesBeforeIndex(CodeWithRegionDirectivesRemoved, TrimDelta);
+				AdjustRegionsForTrim(OutFunction.GraphRegions, TrimLineDelta);
+
+				OutFunction.Code = CodeWithRegionDirectivesRemoved.TrimStartAndEnd();
+				OutFunction.CodeStartIndex = BodyContentStartIndex + SectionBodyStartIndex + TrimDelta;
+			}
+			else if (SectionName.Equals(TEXT("Layout"), ESearchCase::IgnoreCase))
+			{
+				if (!ParseLayoutStatements(SectionBody, OutFunction.Layout, OutError))
+				{
+					return false;
+				}
 			}
 			else if (SectionName.Equals(TEXT("Code"), ESearchCase::IgnoreCase))
 			{

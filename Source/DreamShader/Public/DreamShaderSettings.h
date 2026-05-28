@@ -51,6 +51,9 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Compiler")
 	bool bVerboseLogs = false;
+
+	UPROPERTY(Config, EditAnywhere, Category="Decompiler")
+	bool bExportDecompiledLayout = true;
 	
 	UPROPERTY(Config, EditAnywhere, Category="Editor")
 	bool bOpenInNewWindow = true;

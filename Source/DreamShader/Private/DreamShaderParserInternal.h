@@ -52,6 +52,12 @@ namespace UE::DreamShader::Private
 		TArray<FTextShaderVariableDeclaration>& OutOutputDeclarations,
 		TArray<FTextShaderOutputBinding>& OutOutputs,
 		FString& OutError);
+	bool ParseLayoutStatements(const FString& BlockContent, FTextShaderLayout& OutLayout, FString& OutError);
+	bool ExtractGraphRegions(
+		const FString& InCode,
+		FString& OutCode,
+		TArray<FTextShaderGraphRegion>& OutRegions,
+		FString& OutError);
 	bool ParseTypedParameterStatements(const FString& BlockContent, TArray<FTextShaderFunctionParameter>& OutParameters, FString& OutError);
 	bool ParseShaderBody(const FString& BodyContent, int32 BodyContentStartIndex, FTextShaderDefinition& OutDefinition, FString& OutError);
 	bool ParseFunctionBody(const FString& BodyContent, FTextShaderFunctionDefinition& OutFunction, FString& OutError);

@@ -3764,6 +3764,138 @@ namespace UE::DreamShader::Editor::Private
 			}
 		}
 
+		static void CreateDreamShaderCommentAt(
+			UMaterial* Material,
+			UMaterialFunction* MaterialFunction,
+			const FString& Title,
+			const int32 X,
+			const int32 Y,
+			const int32 W,
+			const int32 H,
+			const FLinearColor& Color)
+		{
+			if ((!Material && !MaterialFunction) || Title.TrimStartAndEnd().IsEmpty())
+			{
+				return;
+			}
+
+			UObject* Outer = Material ? static_cast<UObject*>(Material) : static_cast<UObject*>(MaterialFunction);
+			UMaterialExpressionComment* Comment = NewObject<UMaterialExpressionComment>(Outer, NAME_None, RF_Transactional);
+			if (!Comment)
+			{
+				return;
+			}
+
+			Comment->Text = FString::Printf(TEXT("DreamShader: %s"), *Title);
+			Comment->MaterialExpressionEditorX = X;
+			Comment->MaterialExpressionEditorY = Y;
+			Comment->SizeX = FMath::Max(120, W);
+			Comment->SizeY = FMath::Max(80, H);
+			Comment->FontSize = 24;
+			Comment->CommentColor = Color;
+			Comment->bCommentBubbleVisible_InDetailsPanel = true;
+			Comment->bColorCommentBubble = true;
+			Comment->bGroupMode = true;
+
+			if (Material)
+			{
+				Material->GetExpressionCollection().AddComment(Comment);
+			}
+			else
+			{
+				MaterialFunction->GetExpressionCollection().AddComment(Comment);
+			}
+		}
+
+		static bool ApplyExplicitDreamShaderLayout(
+			UMaterial* Material,
+			UMaterialFunction* MaterialFunction,
+			const FTextShaderLayout* Layout,
+			const TMap<FString, UMaterialExpression*>* ExpressionsByVariable)
+		{
+			if (!Layout || (Layout->Nodes.IsEmpty() && Layout->Comments.IsEmpty()))
+			{
+				return false;
+			}
+
+			bool bAppliedAnyNode = false;
+			if (ExpressionsByVariable)
+			{
+				for (const FTextShaderLayoutNode& Node : Layout->Nodes)
+				{
+					if (UMaterialExpression* const* Expression = ExpressionsByVariable->Find(Node.Var))
+					{
+						SetGeneratedExpressionPosition(*Expression, Node.X, Node.Y);
+						bAppliedAnyNode = true;
+					}
+				}
+			}
+
+			for (const FTextShaderLayoutComment& Comment : Layout->Comments)
+			{
+				CreateDreamShaderCommentAt(
+					Material,
+					MaterialFunction,
+					Comment.Name,
+					Comment.X,
+					Comment.Y,
+					Comment.W,
+					Comment.H,
+					Comment.Color);
+			}
+
+			return bAppliedAnyNode || !Layout->Comments.IsEmpty();
+		}
+
+		static void AddRegionLayoutBlocks(
+			const TArray<UMaterialExpression*>& Expressions,
+			const TMap<FString, UMaterialExpression*>* ExpressionsByVariable,
+			const TMap<FString, FString>* RegionByVariable,
+			TArray<FGeneratedLayoutBlock>& InOutBlocks,
+			TSet<UMaterialExpression*>& InOutOutputSinkExpressions)
+		{
+			if (!ExpressionsByVariable || !RegionByVariable || RegionByVariable->IsEmpty())
+			{
+				return;
+			}
+
+			TSet<UMaterialExpression*> ExpressionSet;
+			for (UMaterialExpression* Expression : Expressions)
+			{
+				if (Expression)
+				{
+					ExpressionSet.Add(Expression);
+				}
+			}
+
+			TMap<FString, int32> BlockIndexByRegion;
+			for (const TPair<FString, FString>& Pair : *RegionByVariable)
+			{
+				UMaterialExpression* const* Expression = ExpressionsByVariable->Find(Pair.Key);
+				if (!Expression || !*Expression || !ExpressionSet.Contains(*Expression))
+				{
+					continue;
+				}
+
+				int32 BlockIndex = INDEX_NONE;
+				if (const int32* ExistingIndex = BlockIndexByRegion.Find(Pair.Value))
+				{
+					BlockIndex = *ExistingIndex;
+				}
+				else
+				{
+					FGeneratedLayoutBlock& Block = InOutBlocks.AddDefaulted_GetRef();
+					Block.Title = Pair.Value;
+					Block.SortKey = InOutBlocks.Num();
+					BlockIndex = InOutBlocks.Num() - 1;
+					BlockIndexByRegion.Add(Pair.Value, BlockIndex);
+				}
+
+				InOutBlocks[BlockIndex].ExpressionSet.Add(*Expression);
+				InOutOutputSinkExpressions.Add(*Expression);
+			}
+		}
+
 		static FLayoutBounds LayoutExpressionBlock(
 			const TArray<UMaterialExpression*>& BlockExpressions,
 			const TMap<UMaterialExpression*, TArray<UMaterialExpression*>>& GlobalDependencies,
@@ -3971,8 +4103,23 @@ namespace UE::DreamShader::Editor::Private
 
 	void LayoutGeneratedExpressions(UMaterial* Material, UMaterialFunction* MaterialFunction)
 	{
+		LayoutGeneratedExpressions(Material, MaterialFunction, nullptr, nullptr, nullptr);
+	}
+
+	void LayoutGeneratedExpressions(
+		UMaterial* Material,
+		UMaterialFunction* MaterialFunction,
+		const FTextShaderLayout* Layout,
+		const TMap<FString, UMaterialExpression*>* ExpressionsByVariable,
+		const TMap<FString, FString>* RegionByVariable)
+	{
 		TArray<UMaterialExpression*> Expressions;
 		CollectMaterialExpressions(Material, MaterialFunction, Expressions);
+		if (ApplyExplicitDreamShaderLayout(Material, MaterialFunction, Layout, ExpressionsByVariable))
+		{
+			return;
+		}
+
 		if (Expressions.Num() < 2)
 		{
 			return;
@@ -4008,6 +4155,7 @@ namespace UE::DreamShader::Editor::Private
 
 		TArray<FGeneratedLayoutBlock> Blocks;
 		TSet<UMaterialExpression*> OutputSinkExpressions;
+		AddRegionLayoutBlocks(Expressions, ExpressionsByVariable, RegionByVariable, Blocks, OutputSinkExpressions);
 		if (Material)
 		{
 			for (int32 MaterialPropertyIndex = 0; MaterialPropertyIndex < MP_MAX; ++MaterialPropertyIndex)

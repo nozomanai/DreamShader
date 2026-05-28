@@ -103,6 +103,7 @@ namespace UE::DreamShader::Editor::Private
 		int32 SourceColumn = 1;
 		FString DeclaredType;
 		FString TargetName;
+		FString RegionName;
 		FString InitializerText;
 		TSharedPtr<FCodeExpression> Expression;
 		FCodeCondition Condition;
@@ -175,6 +176,12 @@ namespace UE::DreamShader::Editor::Private
 		const FString& RouteName,
 		int32 RouteIndex);
 	void LayoutGeneratedExpressions(UMaterial* Material, UMaterialFunction* MaterialFunction);
+	void LayoutGeneratedExpressions(
+		UMaterial* Material,
+		UMaterialFunction* MaterialFunction,
+		const FTextShaderLayout* Layout,
+		const TMap<FString, UMaterialExpression*>* ExpressionsByVariable,
+		const TMap<FString, FString>* RegionByVariable);
 	void ResetMaterialToDefaults(UMaterial* Material);
 	bool ValidateSettings(const FTextShaderDefinition& Definition, FString& OutError);
 	bool ApplySettings(UMaterial* Material, const FTextShaderDefinition& Definition, FString& OutError);
@@ -249,6 +256,8 @@ namespace UE::DreamShader::Editor::Private
 			TMap<FString, FCodeValue>& InOutValues,
 			FString& OutError);
 		bool EvaluateOutputExpression(const FString& ExpressionText, FCodeValue& OutValue, FString& OutError);
+		const TMap<FString, UMaterialExpression*>& GetGeneratedExpressionsByVariable() const { return GeneratedExpressionsByVariable; }
+		const TMap<FString, FString>& GetRegionByVariable() const { return RegionByVariable; }
 
 	private:
 		UMaterial* Material = nullptr;
@@ -262,6 +271,8 @@ namespace UE::DreamShader::Editor::Private
 		int32 CodeStartColumn = 1;
 		TMap<FString, FCodeValue>* Values = nullptr;
 		TMap<FString, UMaterialExpression*> GeneratedPropertyExpressions;
+		TMap<FString, UMaterialExpression*> GeneratedExpressionsByVariable;
+		TMap<FString, FString> RegionByVariable;
 		TMap<FString, FCodeValue> ReusableExpressionValues;
 		TSet<FString> CreatingPropertyNames;
 		int32 NextPropertyNodeY = -620;
@@ -270,6 +281,7 @@ namespace UE::DreamShader::Editor::Private
 		mutable int32 ProgressTickCounter = 0;
 
 		FCodeValue* FindValue(const FString& Name) const;
+		void RegisterGeneratedVariable(const FCodeStatement& Statement, const FCodeValue& Value);
 		bool TryCreatePropertyValue(const FString& Name, FCodeValue& OutValue, FString& OutError);
 		int32 ConsumeNodeY();
 		UMaterialExpression* CreateExpression(TSubclassOf<UMaterialExpression> ExpressionClass, int32 PositionX, int32 PositionY) const;
