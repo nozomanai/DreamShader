@@ -1,9 +1,10 @@
 #include "DreamShaderCommandletRunner.h"
 
 #include "DreamShaderCompileService.h"
-#include "DreamShaderDecompileService.h"
+#include "Decompiler/DreamShaderDecompileService.h"
+#include "Compile/DreamShaderEditorCompileAdapter.h"
 #include "DreamShaderModule.h"
-#include "DreamShaderSourceFileUtils.h"
+#include "SourceFiles/DreamShaderSourceFileUtils.h"
 
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
@@ -264,7 +265,7 @@ namespace UE::DreamShader::Editor::Private
 			return true;
 		}
 
-		UE::DreamShader::Editor::FDreamShaderCompileService CompileService(UE::DreamShader::Editor::GetMaterialGeneratorCompiler());
+		UE::DreamShader::Compiler::FDreamShaderCompileService CompileService(UE::DreamShader::Editor::GetEditorCompileAdapter());
 		bool bSucceeded = true;
 		for (const FString& SourceFile : SourceFiles)
 		{
@@ -275,7 +276,7 @@ namespace UE::DreamShader::Editor::Private
 				continue;
 			}
 
-			const UE::DreamShader::Editor::FDreamShaderCompileResult Result = CompileService.CompileAssets(SourceFile, bForce);
+			const UE::DreamShader::Compiler::FDreamShaderCompileResult Result = CompileService.CompileAssets(SourceFile, bForce);
 			if (Result.bSucceeded)
 			{
 				UE_LOG(LogDreamShader, Display, TEXT("%s"), *Result.Message);

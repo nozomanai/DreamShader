@@ -1,7 +1,7 @@
 #include "DreamShaderDependencyGraphService.h"
 
 #include "DreamShaderModule.h"
-#include "DreamShaderSourceFileUtils.h"
+#include "SourceFiles/DreamShaderSourceFileUtils.h"
 
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"

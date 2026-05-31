@@ -1,6 +1,48 @@
 #pragma once
 
-#include "DreamShaderCompilerInterfaces.h"
+#include "CoreMinimal.h"
+
+class UObject;
+class UMaterial;
+class UMaterialFunction;
+
+namespace UE::DreamShader::Editor
+{
+	enum class EDreamShaderDecompiledFunctionKind : uint8
+	{
+		Function,
+		MaterialLayer,
+		MaterialLayerBlend
+	};
+
+	struct FDreamShaderDecompileRequest
+	{
+		UObject* Asset = nullptr;
+		FString OutputFilePath;
+	};
+
+	struct FDreamShaderDecompileResult
+	{
+		bool bSucceeded = false;
+		FString SourceText;
+		FString OutputFilePath;
+		FString Error;
+	};
+
+	class IDreamShaderDecompiler
+	{
+	public:
+		virtual ~IDreamShaderDecompiler() = default;
+
+		virtual bool DecompileMaterial(UMaterial* Material, const FString& DecompiledName, FString& OutSourceText, FString& OutError) = 0;
+		virtual bool DecompileFunction(
+			UMaterialFunction* MaterialFunction,
+			const FString& DecompiledName,
+			EDreamShaderDecompiledFunctionKind FunctionKind,
+			FString& OutSourceText,
+			FString& OutError) = 0;
+	};
+}
 
 namespace UE::DreamShader::Editor::Private
 {
@@ -31,4 +73,5 @@ namespace UE::DreamShader::Editor::Private
 	private:
 		IDreamShaderDecompiler& Decompiler;
 	};
+
 }

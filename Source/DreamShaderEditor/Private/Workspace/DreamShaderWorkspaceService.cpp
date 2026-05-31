@@ -1,6 +1,6 @@
 #include "DreamShaderWorkspaceService.h"
 
-#include "DreamShaderMaterialGeneratorPrivate.h"
+#include "MaterialAssetGeneration/DreamShaderMaterialGeneratorPrivate.h"
 #include "DreamShaderModule.h"
 #include "DreamShaderSettings.h"
 

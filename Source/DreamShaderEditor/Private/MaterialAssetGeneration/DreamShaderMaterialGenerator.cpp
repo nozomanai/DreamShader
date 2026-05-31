@@ -1,6 +1,6 @@
 #include "DreamShaderMaterialGenerator.h"
 
-#include "DreamShaderDependencyGraphService.h"
+#include "DependencyGraph/DreamShaderDependencyGraphService.h"
 #include "DreamShaderMaterialGeneratorCodeShared.h"
 #include "DreamShaderMaterialGeneratorPrivate.h"
 

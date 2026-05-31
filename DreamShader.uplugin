@@ -22,6 +22,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "DreamShaderCompiler",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "DreamShaderEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"

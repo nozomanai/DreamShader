@@ -16,6 +16,7 @@ public class DreamShaderEditor : ModuleRules
 				"CoreUObject",
 				"DirectoryWatcher",
 				"DreamShader",
+				"DreamShaderCompiler",
 				"Engine",
 				"Json",
 				"MaterialEditor",

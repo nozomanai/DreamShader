@@ -1,4 +1,4 @@
-#include "DreamShaderEditorBridge.h"
+#include "Bridge/DreamShaderEditorBridge.h"
 
 #include "CoreGlobals.h"
 #include "Modules/ModuleManager.h"

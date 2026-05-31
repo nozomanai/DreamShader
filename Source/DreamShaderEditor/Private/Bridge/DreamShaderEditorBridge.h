@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 
-#include "DreamShaderDiagnosticsStore.h"
+#include "Diagnostics/DreamShaderDiagnosticsStore.h"
 
 #include "Containers/Ticker.h"
 
