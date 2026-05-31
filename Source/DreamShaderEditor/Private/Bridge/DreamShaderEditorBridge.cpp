@@ -71,7 +71,7 @@ namespace UE::DreamShader::Editor::Private
 
 		FString GetMaterialQualityLevelLabel(const EMaterialQualityLevel::Type QualityLevel)
 		{
-			return LexToString(QualityLevel);
+			return ::LexToString(QualityLevel);
 		}
 
 		FString GetFirstMeaningfulErrorLine(const FString& InError)

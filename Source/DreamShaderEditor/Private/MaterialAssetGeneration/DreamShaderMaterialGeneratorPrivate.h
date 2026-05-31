@@ -24,12 +24,14 @@ namespace UE::DreamShader::Editor::Private
 	{
 		EMaterialProperty Property = MP_EmissiveColor;
 		ECustomMaterialOutputType OutputType = CMOT_Float1;
+		bool bIsSubstrateMaterial = false;
 	};
 
 	struct FResolvedNamedOutput
 	{
 		FString Name;
 		ECustomMaterialOutputType OutputType = CMOT_Float1;
+		bool bIsSubstrateMaterial = false;
 	};
 
 	enum class ECodeTokenType : uint8
@@ -124,6 +126,7 @@ namespace UE::DreamShader::Editor::Private
 		bool bIsTextureObject = false;
 		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
 		bool bIsMaterialAttributes = false;
+		bool bIsSubstrateMaterial = false;
 		bool bHasAuthoritativeComponentCount = false;
 	};
 
@@ -201,8 +204,11 @@ namespace UE::DreamShader::Editor::Private
 		FString& OutError);
 	bool TryGetComponentCountForOutputType(ECustomMaterialOutputType OutputType, int32& OutComponentCount);
 	bool IsMaterialAttributesType(const FString& InTypeName);
+	bool IsSubstrateMaterialType(const FString& InTypeName);
 	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture);
 	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, ETextShaderTextureType& OutTextureType);
+	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, bool& bOutIsSubstrateMaterial);
+	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, ETextShaderTextureType& OutTextureType, bool& bOutIsSubstrateMaterial);
 	bool TryResolveOutputVariableComponentCount(
 		const FTextShaderDefinition& Definition,
 		const FString& VariableName,
@@ -214,18 +220,27 @@ namespace UE::DreamShader::Editor::Private
 		int32& OutComponentCount,
 		bool& bOutIsTexture,
 		ETextShaderTextureType& OutTextureType);
+	bool TryResolveOutputVariableComponentCount(
+		const FTextShaderDefinition& Definition,
+		const FString& VariableName,
+		int32& OutComponentCount,
+		bool& bOutIsTexture,
+		ETextShaderTextureType& OutTextureType,
+		bool& bOutIsSubstrateMaterial);
 	bool CreateOrReuseMaterial(const FTextShaderDefinition& Definition, UMaterial*& OutMaterial, FString& OutError);
 	bool CreateOrReuseMaterialFunction(const FTextShaderMaterialFunctionDefinition& Definition, UMaterialFunction*& OutFunction, FString& OutError);
 	bool TryResolveMaterialFunctionParameterType(
 		const FString& InTypeName,
 		int32& OutComponentCount,
 		bool& bOutIsTexture,
-		int32& OutFunctionInputTypeValue);
+		int32& OutFunctionInputTypeValue,
+		bool& bOutIsSubstrateMaterial);
 	bool ValidateOutputs(
 		const FTextShaderDefinition& Definition,
 		TArray<FResolvedNamedOutput>& OutNamedOutputs,
 		bool& bOutUsesReturn,
 		ECustomMaterialOutputType& OutReturnType,
+		bool& bOutReturnIsSubstrateMaterial,
 		FString& OutError);
 	FString BuildSourceHash(const FString& SourceText);
 	bool IsGeneratedAssetSourceCurrent(UObject* Asset, const FString& SourceFilePath, const FString& SourceHash);
@@ -291,6 +306,7 @@ namespace UE::DreamShader::Editor::Private
 		bool CreateDefaultValue(const FString& DeclaredType, FCodeValue& OutValue, FString& OutError);
 		bool CoerceValueToType(const FCodeValue& InValue, int32 ExpectedComponentCount, bool bExpectedTexture, FCodeValue& OutValue, FString& OutError);
 		bool CoerceValueToType(const FCodeValue& InValue, int32 ExpectedComponentCount, bool bExpectedTexture, ETextShaderTextureType ExpectedTextureType, FCodeValue& OutValue, FString& OutError);
+		bool CoerceValueToType(const FCodeValue& InValue, int32 ExpectedComponentCount, bool bExpectedTexture, ETextShaderTextureType ExpectedTextureType, bool bExpectedSubstrateMaterial, FCodeValue& OutValue, FString& OutError);
 		bool EvaluateBraceInitializer(const FString& ConstructorType, const FString& InitializerText, FCodeValue& OutValue, FString& OutError);
 		bool ResolveTargetTypeForAssignment(const FCodeStatement& Statement, FString& OutTypeName, FString& OutError) const;
 		bool ResolveMaterialAttributesMemberType(const FString& MemberName, int32& OutComponentCount, FString& OutTypeName, FString& OutError) const;

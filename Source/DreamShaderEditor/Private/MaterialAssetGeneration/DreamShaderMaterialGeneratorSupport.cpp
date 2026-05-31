@@ -79,6 +79,10 @@ namespace UE::DreamShader::Editor::Private
 		{
 			OutProperty = { MP_MaterialAttributes, CMOT_MaterialAttributes };
 		}
+		else if (Matches(TEXT("FrontMaterial")))
+		{
+			OutProperty = { MP_FrontMaterial, CMOT_Float1, true };
+		}
 		else if (Matches(TEXT("EmissiveColor")) || Matches(TEXT("Emissive")))
 		{
 			OutProperty = { MP_EmissiveColor, CMOT_Float3 };
@@ -810,7 +814,8 @@ namespace UE::DreamShader::Editor::Private
 		const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
 		return StructProperty
 			&& StructProperty->Struct
-			&& StructProperty->Struct->GetFName() == NAME_ExpressionInput;
+			&& (StructProperty->Struct->GetFName() == NAME_ExpressionInput
+				|| StructProperty->Struct->GetName().Equals(TEXT("MaterialAttributesInput"), ESearchCase::IgnoreCase));
 	}
 
 	struct FResolvedMaterialSettingTarget
@@ -6287,10 +6292,31 @@ namespace UE::DreamShader::Editor::Private
 		return TypeName.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase);
 	}
 
-	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, ETextShaderTextureType& OutTextureType)
+	bool IsSubstrateMaterialType(const FString& InTypeName)
+	{
+		FString TypeName = InTypeName;
+		TypeName.TrimStartAndEndInline();
+		TypeName.ReplaceInline(TEXT(" "), TEXT(""));
+		return TypeName.Equals(TEXT("Substrate"), ESearchCase::IgnoreCase);
+	}
+
+	bool TryResolveCodeDeclaredType(
+		const FString& InTypeName,
+		int32& OutComponentCount,
+		bool& bOutIsTexture,
+		ETextShaderTextureType& OutTextureType,
+		bool& bOutIsSubstrateMaterial)
 	{
 		bOutIsTexture = false;
+		bOutIsSubstrateMaterial = false;
 		OutTextureType = ETextShaderTextureType::Texture2D;
+
+		if (IsSubstrateMaterialType(InTypeName))
+		{
+			OutComponentCount = 0;
+			bOutIsSubstrateMaterial = true;
+			return true;
+		}
 
 		ECustomMaterialOutputType OutputType = CMOT_Float1;
 		if (TryResolveCustomOutputType(InTypeName, OutputType) && TryGetComponentCountForOutputType(OutputType, OutComponentCount))
@@ -6332,6 +6358,18 @@ namespace UE::DreamShader::Editor::Private
 		return false;
 	}
 
+	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, ETextShaderTextureType& OutTextureType)
+	{
+		bool bIsSubstrateMaterial = false;
+		return TryResolveCodeDeclaredType(InTypeName, OutComponentCount, bOutIsTexture, OutTextureType, bIsSubstrateMaterial);
+	}
+
+	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture, bool& bOutIsSubstrateMaterial)
+	{
+		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
+		return TryResolveCodeDeclaredType(InTypeName, OutComponentCount, bOutIsTexture, TextureType, bOutIsSubstrateMaterial);
+	}
+
 	bool TryResolveCodeDeclaredType(const FString& InTypeName, int32& OutComponentCount, bool& bOutIsTexture)
 	{
 		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
@@ -6343,17 +6381,30 @@ namespace UE::DreamShader::Editor::Private
 		const FString& VariableName,
 		int32& OutComponentCount,
 		bool& bOutIsTexture,
-		ETextShaderTextureType& OutTextureType)
+		ETextShaderTextureType& OutTextureType,
+		bool& bOutIsSubstrateMaterial)
 	{
+		bOutIsSubstrateMaterial = false;
 		for (const FTextShaderVariableDeclaration& Declaration : Definition.OutputDeclarations)
 		{
 			if (Declaration.Name.Equals(VariableName, ESearchCase::IgnoreCase))
 			{
-				return TryResolveCodeDeclaredType(Declaration.Type, OutComponentCount, bOutIsTexture, OutTextureType);
+				return TryResolveCodeDeclaredType(Declaration.Type, OutComponentCount, bOutIsTexture, OutTextureType, bOutIsSubstrateMaterial);
 			}
 		}
 
 		return false;
+	}
+
+	bool TryResolveOutputVariableComponentCount(
+		const FTextShaderDefinition& Definition,
+		const FString& VariableName,
+		int32& OutComponentCount,
+		bool& bOutIsTexture,
+		ETextShaderTextureType& OutTextureType)
+	{
+		bool bIsSubstrateMaterial = false;
+		return TryResolveOutputVariableComponentCount(Definition, VariableName, OutComponentCount, bOutIsTexture, OutTextureType, bIsSubstrateMaterial);
 	}
 
 	bool TryResolveOutputVariableComponentCount(
@@ -6370,8 +6421,10 @@ namespace UE::DreamShader::Editor::Private
 		const FString& InTypeName,
 		int32& OutComponentCount,
 		bool& bOutIsTexture,
-		int32& OutFunctionInputTypeValue)
+		int32& OutFunctionInputTypeValue,
+		bool& bOutIsSubstrateMaterial)
 	{
+		bOutIsSubstrateMaterial = false;
 		if (InTypeName.Equals(TEXT("StaticBool"), ESearchCase::IgnoreCase)
 			|| InTypeName.Equals(TEXT("StaticBoolParameter"), ESearchCase::IgnoreCase))
 		{
@@ -6389,7 +6442,16 @@ namespace UE::DreamShader::Editor::Private
 			return true;
 		}
 
-		if (!TryResolveCodeDeclaredType(InTypeName, OutComponentCount, bOutIsTexture))
+		if (IsSubstrateMaterialType(InTypeName))
+		{
+			OutComponentCount = 0;
+			bOutIsTexture = false;
+			bOutIsSubstrateMaterial = true;
+			OutFunctionInputTypeValue = static_cast<int32>(FunctionInput_Substrate);
+			return true;
+		}
+
+		if (!TryResolveCodeDeclaredType(InTypeName, OutComponentCount, bOutIsTexture, bOutIsSubstrateMaterial))
 		{
 			return false;
 		}
@@ -6440,6 +6502,7 @@ namespace UE::DreamShader::Editor::Private
 		TArray<FResolvedNamedOutput>& OutNamedOutputs,
 		bool& bOutUsesReturn,
 		ECustomMaterialOutputType& OutReturnType,
+		bool& bOutReturnIsSubstrateMaterial,
 		FString& OutError)
 	{
 		const auto IsSimpleOutputReference = [](const FString& InText) -> bool
@@ -6472,9 +6535,11 @@ namespace UE::DreamShader::Editor::Private
 		OutNamedOutputs.Reset();
 		bOutUsesReturn = false;
 		OutReturnType = CMOT_Float1;
+		bOutReturnIsSubstrateMaterial = false;
 
 		TMap<FString, ECustomMaterialOutputType> DeclaredOutputTypes;
 		TMap<FString, FString> DeclaredOutputTypeTexts;
+		TMap<FString, bool> DeclaredOutputSubstrateTypes;
 		for (const FTextShaderVariableDeclaration& Declaration : Definition.OutputDeclarations)
 		{
 			if (Declaration.Name.Equals(TEXT("return"), ESearchCase::IgnoreCase))
@@ -6484,7 +6549,8 @@ namespace UE::DreamShader::Editor::Private
 			}
 
 			ECustomMaterialOutputType DeclaredType = CMOT_Float1;
-			if (!TryResolveCustomOutputType(Declaration.Type, DeclaredType))
+			const bool bDeclaredSubstrate = IsSubstrateMaterialType(Declaration.Type);
+			if (!bDeclaredSubstrate && !TryResolveCustomOutputType(Declaration.Type, DeclaredType))
 			{
 				OutError = FString::Printf(TEXT("Unsupported output type '%s' for '%s'."), *Declaration.Type, *Declaration.Name);
 				return false;
@@ -6492,7 +6558,8 @@ namespace UE::DreamShader::Editor::Private
 
 			if (const ECustomMaterialOutputType* ExistingType = DeclaredOutputTypes.Find(Declaration.Name))
 			{
-				if (*ExistingType != DeclaredType)
+				const bool bExistingSubstrate = DeclaredOutputSubstrateTypes.FindRef(Declaration.Name);
+				if (*ExistingType != DeclaredType || bExistingSubstrate != bDeclaredSubstrate)
 				{
 					OutError = FString::Printf(TEXT("Output variable '%s' is declared with conflicting types."), *Declaration.Name);
 					return false;
@@ -6502,6 +6569,7 @@ namespace UE::DreamShader::Editor::Private
 			{
 				DeclaredOutputTypes.Add(Declaration.Name, DeclaredType);
 				DeclaredOutputTypeTexts.Add(Declaration.Name, Declaration.Type);
+				DeclaredOutputSubstrateTypes.Add(Declaration.Name, bDeclaredSubstrate);
 			}
 		}
 
@@ -6511,6 +6579,7 @@ namespace UE::DreamShader::Editor::Private
 			const FString SourceName = Binding.SourceText.TrimStartAndEnd();
 			const bool bIsSimpleSourceReference = IsSimpleOutputReference(SourceName);
 			ECustomMaterialOutputType BindingOutputType = CMOT_Float1;
+			bool bBindingIsSubstrateMaterial = false;
 			bool bHasImplicitTypeFromTarget = false;
 			if (Binding.TargetKind == FTextShaderOutputBinding::ETargetKind::MaterialProperty)
 			{
@@ -6522,6 +6591,7 @@ namespace UE::DreamShader::Editor::Private
 				}
 
 				BindingOutputType = ResolvedProperty.OutputType;
+				bBindingIsSubstrateMaterial = ResolvedProperty.bIsSubstrateMaterial;
 				bHasImplicitTypeFromTarget = true;
 			}
 
@@ -6537,8 +6607,9 @@ namespace UE::DreamShader::Editor::Private
 				{
 					bOutUsesReturn = true;
 					OutReturnType = BindingOutputType;
+					bOutReturnIsSubstrateMaterial = bBindingIsSubstrateMaterial;
 				}
-				else if (OutReturnType != BindingOutputType)
+				else if (OutReturnType != BindingOutputType || bOutReturnIsSubstrateMaterial != bBindingIsSubstrateMaterial)
 				{
 					OutError = TEXT("The return value is bound to material properties with incompatible types.");
 					return false;
@@ -6554,7 +6625,9 @@ namespace UE::DreamShader::Editor::Private
 
 			if (const int32* ExistingIndex = OutputOrder.Find(SourceName))
 			{
-				if (OutNamedOutputs[*ExistingIndex].OutputType != BindingOutputType && bHasImplicitTypeFromTarget)
+				if ((OutNamedOutputs[*ExistingIndex].OutputType != BindingOutputType
+					|| OutNamedOutputs[*ExistingIndex].bIsSubstrateMaterial != bBindingIsSubstrateMaterial)
+					&& bHasImplicitTypeFromTarget)
 				{
 					OutError = FString::Printf(TEXT("Output variable '%s' is bound to incompatible material properties."), *SourceName);
 					return false;
@@ -6565,10 +6638,12 @@ namespace UE::DreamShader::Editor::Private
 				FResolvedNamedOutput& Output = OutNamedOutputs.AddDefaulted_GetRef();
 				Output.Name = SourceName;
 				Output.OutputType = BindingOutputType;
+				Output.bIsSubstrateMaterial = bBindingIsSubstrateMaterial;
 
 				if (const ECustomMaterialOutputType* DeclaredType = DeclaredOutputTypes.Find(SourceName))
 				{
-					if (bHasImplicitTypeFromTarget && *DeclaredType != BindingOutputType)
+					const bool bDeclaredSubstrate = DeclaredOutputSubstrateTypes.FindRef(SourceName);
+					if (bHasImplicitTypeFromTarget && (*DeclaredType != BindingOutputType || bDeclaredSubstrate != bBindingIsSubstrateMaterial))
 					{
 						OutError = FString::Printf(
 							TEXT("Output variable '%s' is declared as '%s' but bound material property '%s' expects a different type."),
@@ -6579,6 +6654,7 @@ namespace UE::DreamShader::Editor::Private
 					}
 
 					Output.OutputType = *DeclaredType;
+					Output.bIsSubstrateMaterial = bDeclaredSubstrate;
 				}
 				else if (!bHasImplicitTypeFromTarget)
 				{

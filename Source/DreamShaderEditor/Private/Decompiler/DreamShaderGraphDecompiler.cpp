@@ -58,6 +58,7 @@
 #include "Materials/MaterialExpressionStaticComponentMaskParameter.h"
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionSubtract.h"
+#include "Materials/MaterialExpressionSubstrate.h"
 #include "Materials/MaterialExpressionTextureBase.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
@@ -123,6 +124,8 @@ namespace UE::DreamShader::Editor::Private
 				return TEXT("VolumeTexture");
 			case FunctionInput_MaterialAttributes:
 				return TEXT("MaterialAttributes");
+			case FunctionInput_Substrate:
+				return TEXT("Substrate");
 			case FunctionInput_StaticBool:
 			case FunctionInput_Bool:
 				return TEXT("bool");
@@ -157,6 +160,10 @@ namespace UE::DreamShader::Editor::Private
 				return TEXT("Texture2DArray");
 			case MCT_VolumeTexture:
 				return TEXT("VolumeTexture");
+			case MCT_MaterialAttributes:
+				return TEXT("MaterialAttributes");
+			case MCT_Substrate:
+				return TEXT("Substrate");
 			case MCT_StaticBool:
 			case MCT_Bool:
 				return TEXT("bool");
@@ -678,6 +685,13 @@ namespace UE::DreamShader::Editor::Private
 			}
 			VisitingExpressions->Add(Expression);
 
+			const EMaterialValueType EarlyOutputType = Expression->GetOutputValueType(OutputIndex);
+			if (EarlyOutputType == MCT_Substrate || EarlyOutputType == MCT_MaterialAttributes || IsTextureMaterialValueType(EarlyOutputType))
+			{
+				VisitingExpressions->Remove(Expression);
+				return 0;
+			}
+
 			auto ResolveInputComponentCount = [VisitingExpressions](const FExpressionInput& Input, const int32 DefaultComponentCount) -> int32
 			{
 				const FExpressionInput TracedInput = Input.GetTracedInput();
@@ -894,6 +908,10 @@ namespace UE::DreamShader::Editor::Private
 			if (TracedInput.Expression)
 			{
 				const EMaterialValueType OutputType = TracedInput.Expression->GetOutputValueType(TracedInput.OutputIndex);
+				if (OutputType == MCT_Substrate)
+				{
+					return TEXT("Substrate");
+				}
 				if (OutputType == MCT_MaterialAttributes)
 				{
 					return TEXT("MaterialAttributes");
@@ -919,6 +937,10 @@ namespace UE::DreamShader::Editor::Private
 			}
 
 			const EMaterialValueType OutputType = const_cast<UMaterialExpressionFunctionOutput*>(OutputExpression)->GetOutputValueType(0);
+			if (OutputType == MCT_Substrate)
+			{
+				return TEXT("Substrate");
+			}
 			if (OutputType == MCT_MaterialAttributes)
 			{
 				return TEXT("MaterialAttributes");
@@ -953,6 +975,10 @@ namespace UE::DreamShader::Editor::Private
 			}
 
 			const EMaterialValueType OutputType = Expression->GetOutputValueType(OutputIndex);
+			if (OutputType == MCT_Substrate)
+			{
+				return TEXT("Substrate");
+			}
 			if (OutputType == MCT_MaterialAttributes)
 			{
 				return TEXT("MaterialAttributes");
@@ -1222,6 +1248,7 @@ namespace UE::DreamShader::Editor::Private
 			int32 ComponentCount = 1;
 			bool bIsTextureObject = false;
 			bool bIsMaterialAttributes = false;
+			bool bIsSubstrateMaterial = false;
 			bool bIsSimple = true;
 		};
 
@@ -1285,6 +1312,7 @@ namespace UE::DreamShader::Editor::Private
 					{ MP_Refraction, TEXT("Refraction"), TEXT("float"), TEXT("Base.Refraction"), TEXT("0.0") },
 					{ MP_PixelDepthOffset, TEXT("PixelDepthOffset"), TEXT("float"), TEXT("Base.PixelDepthOffset"), TEXT("0.0") },
 					{ MP_MaterialAttributes, TEXT("MaterialAttributes"), TEXT("MaterialAttributes"), TEXT("Base.MaterialAttributes"), TEXT("MaterialAttributes()") },
+					{ MP_FrontMaterial, TEXT("FrontMaterial"), TEXT("Substrate"), TEXT("Base.FrontMaterial"), TEXT("default") },
 				};
 
 				for (const FMaterialOutputBinding& Binding : Bindings)
@@ -1944,7 +1972,8 @@ namespace UE::DreamShader::Editor::Private
 				const int32 ComponentCount,
 				const bool bIsSimple,
 				const bool bIsTextureObject = false,
-				const bool bIsMaterialAttributes = false)
+				const bool bIsMaterialAttributes = false,
+				const bool bIsSubstrateMaterial = false)
 			{
 				FDecompiledValue Value;
 				Value.Text = Text;
@@ -1953,6 +1982,7 @@ namespace UE::DreamShader::Editor::Private
 				Value.bIsSimple = bIsSimple;
 				Value.bIsTextureObject = bIsTextureObject;
 				Value.bIsMaterialAttributes = bIsMaterialAttributes;
+				Value.bIsSubstrateMaterial = bIsSubstrateMaterial;
 				return Value;
 			}
 
@@ -1964,13 +1994,15 @@ namespace UE::DreamShader::Editor::Private
 			{
 				const FString Type = GetDreamShaderTypeForExpressionOutput(Expression, OutputIndex);
 				const bool bIsTextureObject = IsTextureObjectOutput(Expression, OutputIndex);
+				const bool bIsSubstrateMaterial = Type.Equals(TEXT("Substrate"), ESearchCase::IgnoreCase);
 				return MakeValue(
 					Text,
 					Type,
 					bIsTextureObject ? 0 : GetComponentCountForExpressionOutput(Expression, OutputIndex),
 					bIsSimple,
 					bIsTextureObject,
-					Type.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase));
+					Type.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase),
+					bIsSubstrateMaterial);
 			}
 
 			static FDecompiledValue MakeDefaultValueForExpressionOutput(UMaterialExpression* Expression, const int32 OutputIndex)
@@ -1984,6 +2016,10 @@ namespace UE::DreamShader::Editor::Private
 				if (Type.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase))
 				{
 					return MakeValue(TEXT("MaterialAttributes()"), Type, 0, true, false, true);
+				}
+				if (Type.Equals(TEXT("Substrate"), ESearchCase::IgnoreCase))
+				{
+					return MakeValue(TEXT("default"), Type, 0, true, false, false, true);
 				}
 
 				const int32 ComponentCount = GetComponentCountForExpressionOutput(Expression, OutputIndex);
@@ -2356,7 +2392,8 @@ namespace UE::DreamShader::Editor::Private
 					Value.ComponentCount,
 					true,
 					Value.bIsTextureObject,
-					Value.bIsMaterialAttributes);
+					Value.bIsMaterialAttributes,
+					Value.bIsSubstrateMaterial);
 			}
 
 			FDecompiledValue AddTempValueWithName(const FDecompiledValue& Value, const FString& Name)
@@ -2372,7 +2409,8 @@ namespace UE::DreamShader::Editor::Private
 					Value.ComponentCount,
 					true,
 					Value.bIsTextureObject,
-					Value.bIsMaterialAttributes);
+					Value.bIsMaterialAttributes,
+					Value.bIsSubstrateMaterial);
 			}
 
 			FDecompiledValue MaybeMaterializeValue(const FDecompiledValue& Value, const FString& BaseName)
@@ -2414,7 +2452,8 @@ namespace UE::DreamShader::Editor::Private
 						Value.ComponentCount,
 						true,
 						Value.bIsTextureObject,
-						Value.bIsMaterialAttributes));
+						Value.bIsMaterialAttributes,
+						Value.bIsSubstrateMaterial));
 			}
 
 			FDecompiledValue CacheNamedTempExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, const FString& Name)
@@ -2433,7 +2472,8 @@ namespace UE::DreamShader::Editor::Private
 						Value.ComponentCount,
 						true,
 						Value.bIsTextureObject,
-						Value.bIsMaterialAttributes));
+						Value.bIsMaterialAttributes,
+						Value.bIsSubstrateMaterial));
 			}
 
 			FDecompiledValue CacheReusableExpressionValue(const FDecompiledExpressionKey& Key, const FDecompiledValue& Value, UMaterialExpression* Expression)
@@ -2575,7 +2615,7 @@ namespace UE::DreamShader::Editor::Private
 
 			static int32 GetCommonNumericComponentCount(const FDecompiledValue& A, const FDecompiledValue& B)
 			{
-				if (A.bIsMaterialAttributes || B.bIsMaterialAttributes)
+				if (A.bIsMaterialAttributes || B.bIsMaterialAttributes || A.bIsSubstrateMaterial || B.bIsSubstrateMaterial)
 				{
 					return 0;
 				}
@@ -3428,7 +3468,8 @@ namespace UE::DreamShader::Editor::Private
 						Value.ComponentCount,
 						true,
 						Value.bIsTextureObject,
-						Value.bIsMaterialAttributes));
+						Value.bIsMaterialAttributes,
+						Value.bIsSubstrateMaterial));
 			}
 
 			FString MakeExpressionOutputSelection(const FString& ExpressionText, UMaterialExpression* Expression, const int32 OutputIndex) const
@@ -3495,6 +3536,20 @@ namespace UE::DreamShader::Editor::Private
 
 				const FString Text = MakeExpressionOutputSelection(Source.Text, Expression, OutputIndex);
 				const int32 ComponentCount = GetComponentCountForExpressionOutput(Expression, OutputIndex);
+				const FString Type = GetDreamShaderTypeForExpressionOutput(Expression, OutputIndex);
+				if (Type.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase)
+					|| Type.Equals(TEXT("Substrate"), ESearchCase::IgnoreCase))
+				{
+					return MakeValue(
+						Text,
+						Type,
+						0,
+						!Text.Contains(TEXT("\n")),
+						false,
+						Type.Equals(TEXT("MaterialAttributes"), ESearchCase::IgnoreCase),
+						Type.Equals(TEXT("Substrate"), ESearchCase::IgnoreCase));
+				}
+
 				return MakeValue(
 					Text,
 					GetDreamShaderTypeForComponentCount(ComponentCount),

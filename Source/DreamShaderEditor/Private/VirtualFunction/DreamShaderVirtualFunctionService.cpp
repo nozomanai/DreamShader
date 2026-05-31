@@ -43,6 +43,10 @@ namespace UE::DreamShader::Editor::Private
 				return TEXT("Texture2DArray");
 			case FunctionInput_VolumeTexture:
 				return TEXT("VolumeTexture");
+			case FunctionInput_MaterialAttributes:
+				return TEXT("MaterialAttributes");
+			case FunctionInput_Substrate:
+				return TEXT("Substrate");
 			case FunctionInput_StaticBool:
 			case FunctionInput_Bool:
 				return TEXT("bool");

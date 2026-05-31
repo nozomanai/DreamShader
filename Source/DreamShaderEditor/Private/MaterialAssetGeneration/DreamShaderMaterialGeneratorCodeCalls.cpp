@@ -8,7 +8,8 @@ namespace UE::DreamShader::Editor::Private
 			UMaterialExpressionMaterialFunctionCall* FunctionCall,
 			const int32 FunctionOutputIndex,
 			int32& InOutComponentCount,
-			bool& bInOutIsTextureObject)
+			bool& bInOutIsTextureObject,
+			bool& bInOutIsSubstrateMaterial)
 		{
 			if (!FunctionCall || !FunctionCall->FunctionOutputs.IsValidIndex(FunctionOutputIndex))
 			{
@@ -18,20 +19,26 @@ namespace UE::DreamShader::Editor::Private
 			// MaterialFunctionCall::GetOutputValueType can report scalar for function outputs
 			// even when the referenced FunctionOutput is a vector. Keep the source declaration
 			// authoritative so vector outputs are not expanded through invalid AppendVector nodes.
-			if (InOutComponentCount > 0 || bInOutIsTextureObject || IsMaterialAttributesComponentType(InOutComponentCount, bInOutIsTextureObject))
+			if (InOutComponentCount > 0 || bInOutIsTextureObject || bInOutIsSubstrateMaterial || IsMaterialAttributesComponentType(InOutComponentCount, bInOutIsTextureObject, bInOutIsSubstrateMaterial))
 			{
 				return true;
 			}
 
 			int32 ResolvedComponentCount = 0;
 			bool bResolvedIsTextureObject = false;
-			if (TryResolveMaterialValueType(
-				FunctionCall->GetOutputValueType(FunctionOutputIndex),
-				ResolvedComponentCount,
-				bResolvedIsTextureObject))
+			const EMaterialValueType OutputValueType = FunctionCall->GetOutputValueType(FunctionOutputIndex);
+			if (OutputValueType == MCT_Substrate)
+			{
+				InOutComponentCount = 0;
+				bInOutIsTextureObject = false;
+				bInOutIsSubstrateMaterial = true;
+				return true;
+			}
+			if (TryResolveMaterialValueType(OutputValueType, ResolvedComponentCount, bResolvedIsTextureObject))
 			{
 				InOutComponentCount = ResolvedComponentCount;
 				bInOutIsTextureObject = bResolvedIsTextureObject;
+				bInOutIsSubstrateMaterial = false;
 				return true;
 			}
 
@@ -47,6 +54,7 @@ namespace UE::DreamShader::Editor::Private
 				{
 					InOutComponentCount = MaskComponentCount;
 					bInOutIsTextureObject = false;
+					bInOutIsSubstrateMaterial = false;
 					return true;
 				}
 			}
@@ -192,7 +200,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		ECustomMaterialOutputType ResultOutputType = CMOT_Float1;
-		if (!TryResolveCustomOutputType(Function->Results[0].Type, ResultOutputType))
+		if (IsSubstrateMaterialType(Function->Results[0].Type) || !TryResolveCustomOutputType(Function->Results[0].Type, ResultOutputType))
 		{
 			OutError = FString::Printf(TEXT("DreamShader Function '%s' has unsupported result type '%s'."), *FunctionName, *Function->Results[0].Type);
 			return false;
@@ -215,15 +223,21 @@ namespace UE::DreamShader::Editor::Private
 
 			int32 ExpectedComponentCount = 1;
 			bool bExpectedTexture = false;
+			bool bExpectedSubstrate = false;
 			ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
-			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType))
+			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
 			{
 				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s' uses unsupported type '%s'."), *FunctionName, *InputDefinition.Name, *InputDefinition.Type);
 				return false;
 			}
+			if (bExpectedSubstrate)
+			{
+				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s' uses Substrate, which is not supported by HLSL Custom node functions. Use GraphFunction or ShaderFunction instead."), *FunctionName, *InputDefinition.Name);
+				return false;
+			}
 
 			FCodeValue CoercedValue;
-			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, CoercedValue, OutError))
+			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedValue, OutError))
 			{
 				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s': %s"), *FunctionName, *InputDefinition.Name, *OutError);
 				return false;
@@ -412,7 +426,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		ECustomMaterialOutputType PrimaryOutputType = CMOT_Float1;
-		if (!TryResolveCustomOutputType(Function.Results[0].Type, PrimaryOutputType))
+		if (IsSubstrateMaterialType(Function.Results[0].Type) || !TryResolveCustomOutputType(Function.Results[0].Type, PrimaryOutputType))
 		{
 			OutError = FString::Printf(TEXT("DreamShader Function '%s' has unsupported result type '%s'."), *Function.Name, *Function.Results[0].Type);
 			return false;
@@ -435,15 +449,21 @@ namespace UE::DreamShader::Editor::Private
 
 			int32 ExpectedComponentCount = 1;
 			bool bExpectedTexture = false;
+			bool bExpectedSubstrate = false;
 			ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
-			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType))
+			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
 			{
 				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s' uses unsupported type '%s'."), *Function.Name, *InputDefinition.Name, *InputDefinition.Type);
 				return false;
 			}
+			if (bExpectedSubstrate)
+			{
+				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s' uses Substrate, which is not supported by HLSL Custom node functions. Use GraphFunction or ShaderFunction instead."), *Function.Name, *InputDefinition.Name);
+				return false;
+			}
 
 			FCodeValue CoercedValue;
-			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, CoercedValue, OutError))
+			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedValue, OutError))
 			{
 				OutError = FString::Printf(TEXT("DreamShader Function '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
 				return false;
@@ -590,7 +610,7 @@ namespace UE::DreamShader::Editor::Private
 		for (int32 ResultIndex = 1; ResultIndex < Function.Results.Num(); ++ResultIndex)
 		{
 			ECustomMaterialOutputType AdditionalOutputType = CMOT_Float1;
-			if (!TryResolveCustomOutputType(Function.Results[ResultIndex].Type, AdditionalOutputType))
+			if (IsSubstrateMaterialType(Function.Results[ResultIndex].Type) || !TryResolveCustomOutputType(Function.Results[ResultIndex].Type, AdditionalOutputType))
 			{
 				OutError = FString::Printf(
 					TEXT("DreamShader Function '%s' has unsupported result type '%s'."),
@@ -610,7 +630,7 @@ namespace UE::DreamShader::Editor::Private
 		for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
 		{
 			ECustomMaterialOutputType ResultOutputType = CMOT_Float1;
-			if (!TryResolveCustomOutputType(Function.Results[ResultIndex].Type, ResultOutputType))
+			if (IsSubstrateMaterialType(Function.Results[ResultIndex].Type) || !TryResolveCustomOutputType(Function.Results[ResultIndex].Type, ResultOutputType))
 			{
 				OutError = FString::Printf(
 					TEXT("DreamShader Function '%s' has unsupported result type '%s'."),
@@ -700,8 +720,146 @@ namespace UE::DreamShader::Editor::Private
 			}
 		}
 
+		if (Function.HLSL.IsEmpty())
+		{
+			TArray<FCodeValue> InputValues;
+			InputValues.Reserve(Function.Inputs.Num());
+			TMap<FString, FCodeValue> LocalValues = *Values;
+			for (int32 InputIndex = 0; InputIndex < Function.Inputs.Num(); ++InputIndex)
+			{
+				const FTextShaderFunctionParameter& InputDefinition = Function.Inputs[InputIndex];
+				FCodeValue InputValue;
+				if (!EvaluateExpression(Arguments[InputIndex].Expression, InputValue, OutError))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
+					return false;
+				}
+
+				int32 ExpectedComponentCount = 1;
+				bool bExpectedTexture = false;
+				bool bExpectedSubstrate = false;
+				ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
+				if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s' uses unsupported type '%s'."), *Function.Name, *InputDefinition.Name, *InputDefinition.Type);
+					return false;
+				}
+
+				FCodeValue CoercedValue;
+				if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedValue, OutError))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
+					return false;
+				}
+
+				LocalValues.Add(InputDefinition.Name, CoercedValue);
+				InputValues.Add(CoercedValue);
+			}
+
+			TArray<FString> ResultTargetNames;
+			ResultTargetNames.Reserve(Function.Results.Num());
+			TSet<FString> SeenTargetNames;
+			for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
+			{
+				const FCodeCallArgument& Argument = Arguments[Function.Inputs.Num() + ResultIndex];
+				if (!Argument.Expression || Argument.Expression->Kind != ECodeExpressionKind::Name)
+				{
+					OutError = FString::Printf(
+						TEXT("DreamShader GraphFunction '%s' out argument %d must be a plain variable name."),
+						*Function.Name,
+						ResultIndex + 1);
+					return false;
+				}
+
+				const FString TargetName = Argument.Expression->Text.TrimStartAndEnd();
+				if (TargetName.IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' has an empty out target name."), *Function.Name);
+					return false;
+				}
+
+				if (SeenTargetNames.Contains(TargetName))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' cannot write multiple out results into '%s' in the same call."), *Function.Name, *TargetName);
+					return false;
+				}
+
+				SeenTargetNames.Add(TargetName);
+				ResultTargetNames.Add(TargetName);
+			}
+
+			TMap<FString, FCodeValue>* PreviousValues = Values;
+			struct FScopedGraphFunctionValues
+			{
+				TMap<FString, FCodeValue>*& ValuesRef;
+				TMap<FString, FCodeValue>* Previous;
+				FScopedGraphFunctionValues(TMap<FString, FCodeValue>*& InValuesRef, TMap<FString, FCodeValue>* NewValues)
+					: ValuesRef(InValuesRef)
+					, Previous(InValuesRef)
+				{
+					ValuesRef = NewValues;
+				}
+				~FScopedGraphFunctionValues()
+				{
+					ValuesRef = Previous;
+				}
+			};
+
+			TArray<FCodeStatement> Statements;
+			FString ParseError;
+			if (!ParseCodeStatements(Function.HLSL, Statements, ParseError))
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' Graph body is invalid: %s"), *Function.Name, *ParseError);
+				return false;
+			}
+
+			{
+				FScopedGraphFunctionValues ScopedValues(Values, &LocalValues);
+				for (const FCodeStatement& Statement : Statements)
+				{
+					if (!ExecuteStatement(Statement, OutError))
+					{
+						OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s': %s"), *Function.Name, *FormatStatementError(Statement, OutError));
+						return false;
+					}
+				}
+			}
+
+			for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
+			{
+				const FTextShaderFunctionParameter& ResultDefinition = Function.Results[ResultIndex];
+				const FCodeValue* ResultValue = LocalValues.Find(ResultDefinition.Name);
+				if (!ResultValue || !ResultValue->Expression)
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' result '%s' was never assigned."), *Function.Name, *ResultDefinition.Name);
+					return false;
+				}
+
+				int32 ExpectedComponentCount = 1;
+				bool bExpectedTexture = false;
+				bool bExpectedSubstrate = false;
+				ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
+				if (!TryResolveCodeDeclaredType(ResultDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' result '%s' uses unsupported type '%s'."), *Function.Name, *ResultDefinition.Name, *ResultDefinition.Type);
+					return false;
+				}
+
+				FCodeValue CoercedResult;
+				if (!CoerceValueToType(*ResultValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedResult, OutError))
+				{
+					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' result '%s': %s"), *Function.Name, *ResultDefinition.Name, *OutError);
+					return false;
+				}
+
+				PreviousValues->Add(ResultTargetNames[ResultIndex], CoercedResult);
+			}
+
+			return true;
+		}
+
 		ECustomMaterialOutputType PrimaryOutputType = CMOT_Float1;
-		if (!TryResolveCustomOutputType(Function.Results[0].Type, PrimaryOutputType))
+		if (IsSubstrateMaterialType(Function.Results[0].Type) || !TryResolveCustomOutputType(Function.Results[0].Type, PrimaryOutputType))
 		{
 			OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' has unsupported result type '%s'."), *Function.Name, *Function.Results[0].Type);
 			return false;
@@ -725,15 +883,21 @@ namespace UE::DreamShader::Editor::Private
 
 			int32 ExpectedComponentCount = 1;
 			bool bExpectedTexture = false;
+			bool bExpectedSubstrate = false;
 			ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
-			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType))
+			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
 			{
 				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s' uses unsupported type '%s'."), *Function.Name, *InputDefinition.Name, *InputDefinition.Type);
 				return false;
 			}
+			if (bExpectedSubstrate)
+			{
+				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s' uses Substrate, which is only supported by GraphFunction Graph blocks."), *Function.Name, *InputDefinition.Name);
+				return false;
+			}
 
 			FCodeValue CoercedValue;
-			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, CoercedValue, OutError))
+			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedValue, OutError))
 			{
 				OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' input '%s': %s"), *Function.Name, *InputDefinition.Name, *OutError);
 				return false;
@@ -985,7 +1149,7 @@ namespace UE::DreamShader::Editor::Private
 					return false;
 				}
 
-				if (UEValue.bIsTextureObject || UEValue.bIsMaterialAttributes)
+				if (UEValue.bIsTextureObject || UEValue.bIsMaterialAttributes || UEValue.bIsSubstrateMaterial)
 				{
 					OutError = FString::Printf(TEXT("DreamShader GraphFunction '%s' UE input '%s' cannot be passed into a Custom node input."), *Function.Name, *CallText);
 					return false;
@@ -1056,7 +1220,7 @@ namespace UE::DreamShader::Editor::Private
 		for (int32 ResultIndex = 1; ResultIndex < Function.Results.Num(); ++ResultIndex)
 		{
 			ECustomMaterialOutputType AdditionalOutputType = CMOT_Float1;
-			if (!TryResolveCustomOutputType(Function.Results[ResultIndex].Type, AdditionalOutputType))
+			if (IsSubstrateMaterialType(Function.Results[ResultIndex].Type) || !TryResolveCustomOutputType(Function.Results[ResultIndex].Type, AdditionalOutputType))
 			{
 				OutError = FString::Printf(
 					TEXT("DreamShader GraphFunction '%s' has unsupported result type '%s'."),
@@ -1076,7 +1240,7 @@ namespace UE::DreamShader::Editor::Private
 		for (int32 ResultIndex = 0; ResultIndex < Function.Results.Num(); ++ResultIndex)
 		{
 			ECustomMaterialOutputType ResultOutputType = CMOT_Float1;
-			if (!TryResolveCustomOutputType(Function.Results[ResultIndex].Type, ResultOutputType))
+			if (IsSubstrateMaterialType(Function.Results[ResultIndex].Type) || !TryResolveCustomOutputType(Function.Results[ResultIndex].Type, ResultOutputType))
 			{
 				OutError = FString::Printf(
 					TEXT("DreamShader GraphFunction '%s' has unsupported result type '%s'."),
@@ -1303,7 +1467,24 @@ namespace UE::DreamShader::Editor::Private
 				return false;
 			}
 
-			ConnectCodeValueToInput(FunctionCall->FunctionInputs[FunctionInputIndex].Input, InputValue);
+			int32 ExpectedComponentCount = 1;
+			bool bExpectedTexture = false;
+			bool bExpectedSubstrate = false;
+			ETextShaderTextureType ExpectedTextureType = ETextShaderTextureType::Texture2D;
+			if (!TryResolveCodeDeclaredType(InputDefinition.Type, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate))
+			{
+				OutError = FString::Printf(TEXT("%s '%s' input '%s' uses unsupported type '%s'."), *CallKind, *FunctionName, *InputDefinition.Name, *InputDefinition.Type);
+				return false;
+			}
+
+			FCodeValue CoercedValue;
+			if (!CoerceValueToType(InputValue, ExpectedComponentCount, bExpectedTexture, ExpectedTextureType, bExpectedSubstrate, CoercedValue, OutError))
+			{
+				OutError = FString::Printf(TEXT("%s '%s' input '%s': %s"), *CallKind, *FunctionName, *InputDefinition.Name, *OutError);
+				return false;
+			}
+
+			ConnectCodeValueToInput(FunctionCall->FunctionInputs[FunctionInputIndex].Input, CoercedValue);
 		}
 
 		if (PositionalArgumentIndex < PositionalArguments.Num())
@@ -1471,7 +1652,8 @@ namespace UE::DreamShader::Editor::Private
 			int32 OutputComponents = 0;
 			bool bIsTextureObject = false;
 			ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
-			if (!TryResolveCodeDeclaredType(Outputs[OutputIndex].Type, OutputComponents, bIsTextureObject, TextureType))
+			bool bIsSubstrateMaterial = false;
+			if (!TryResolveCodeDeclaredType(Outputs[OutputIndex].Type, OutputComponents, bIsTextureObject, TextureType, bIsSubstrateMaterial))
 			{
 				OutError = FString::Printf(TEXT("%s '%s' output '%s' uses unsupported type '%s'."), *CallKind, *FunctionName, *Outputs[OutputIndex].Name, *Outputs[OutputIndex].Type);
 				return false;
@@ -1499,7 +1681,7 @@ namespace UE::DreamShader::Editor::Private
 				OutError = FString::Printf(TEXT("%s '%s' output '%s' does not exist on MaterialFunction asset '%s'."), *CallKind, *FunctionName, *Outputs[OutputIndex].Name, *ObjectPath);
 				return false;
 			}
-			ApplyFunctionCallOutputType(FunctionCall, FunctionOutputIndex, OutputComponents, bIsTextureObject);
+			ApplyFunctionCallOutputType(FunctionCall, FunctionOutputIndex, OutputComponents, bIsTextureObject, bIsSubstrateMaterial);
 
 			FCodeValue OutputValue;
 			OutputValue.Expression = FunctionCall;
@@ -1507,7 +1689,8 @@ namespace UE::DreamShader::Editor::Private
 			OutputValue.ComponentCount = OutputComponents;
 			OutputValue.bIsTextureObject = bIsTextureObject;
 			OutputValue.TextureType = TextureType;
-			OutputValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject);
+			OutputValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject, bIsSubstrateMaterial);
+			OutputValue.bIsSubstrateMaterial = bIsSubstrateMaterial;
 			(*Values).Add(OutputTargetNames[OutputIndex], OutputValue);
 		}
 
@@ -1764,7 +1947,8 @@ namespace UE::DreamShader::Editor::Private
 		int32 OutputComponents = 0;
 		bool bIsTextureObject = false;
 		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
-		if (!TryResolveCodeDeclaredType(Outputs[OutputIndex].Type, OutputComponents, bIsTextureObject, TextureType))
+		bool bIsSubstrateMaterial = false;
+		if (!TryResolveCodeDeclaredType(Outputs[OutputIndex].Type, OutputComponents, bIsTextureObject, TextureType, bIsSubstrateMaterial))
 		{
 			OutError = FString::Printf(TEXT("%s '%s' output '%s' uses unsupported type '%s'."), *CallKind, *FunctionName, *Outputs[OutputIndex].Name, *Outputs[OutputIndex].Type);
 			return false;
@@ -1792,14 +1976,15 @@ namespace UE::DreamShader::Editor::Private
 			OutError = FString::Printf(TEXT("%s '%s' output '%s' does not exist on MaterialFunction asset '%s'."), *CallKind, *FunctionName, *Outputs[OutputIndex].Name, *ObjectPath);
 			return false;
 		}
-		ApplyFunctionCallOutputType(FunctionCall, FunctionOutputIndex, OutputComponents, bIsTextureObject);
+		ApplyFunctionCallOutputType(FunctionCall, FunctionOutputIndex, OutputComponents, bIsTextureObject, bIsSubstrateMaterial);
 
 		OutValue.Expression = FunctionCall;
 		OutValue.OutputIndex = FunctionOutputIndex;
 		OutValue.ComponentCount = OutputComponents;
 		OutValue.bIsTextureObject = bIsTextureObject;
 		OutValue.TextureType = TextureType;
-		OutValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject);
+		OutValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject, bIsSubstrateMaterial);
+		OutValue.bIsSubstrateMaterial = bIsSubstrateMaterial;
 		AddReusableExpressionValue(OutputReuseKey, OutValue);
 		return true;
 	}

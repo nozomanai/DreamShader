@@ -1,7 +1,66 @@
 #include "DreamShaderMaterialGeneratorCodeShared.h"
 
+#include "Materials/MaterialExpressionSubstrate.h"
+
 namespace UE::DreamShader::Editor::Private
 {
+	namespace
+	{
+		struct FSubstrateBuiltinDescriptor
+		{
+			const TCHAR* Name = TEXT("");
+			const TCHAR* ClassName = TEXT("");
+			bool bIsSubstrateOutput = true;
+		};
+
+		static const FSubstrateBuiltinDescriptor* FindSubstrateBuiltinDescriptor(const FString& FunctionName)
+		{
+			static const FSubstrateBuiltinDescriptor Builtins[] =
+			{
+				{ TEXT("ShadingModels"), TEXT("MaterialExpressionSubstrateShadingModels"), true },
+				{ TEXT("Slab"), TEXT("MaterialExpressionSubstrateSlabBSDF"), true },
+				{ TEXT("SimpleClearCoat"), TEXT("MaterialExpressionSubstrateSimpleClearCoatBSDF"), true },
+				{ TEXT("VolumetricFogCloud"), TEXT("MaterialExpressionSubstrateVolumetricFogCloudBSDF"), true },
+				{ TEXT("Unlit"), TEXT("MaterialExpressionSubstrateUnlitBSDF"), true },
+				{ TEXT("Hair"), TEXT("MaterialExpressionSubstrateHairBSDF"), true },
+				{ TEXT("Eye"), TEXT("MaterialExpressionSubstrateEyeBSDF"), true },
+				{ TEXT("SingleLayerWater"), TEXT("MaterialExpressionSubstrateSingleLayerWaterBSDF"), true },
+				{ TEXT("LightFunction"), TEXT("MaterialExpressionSubstrateLightFunction"), true },
+				{ TEXT("PostProcess"), TEXT("MaterialExpressionSubstratePostProcess"), true },
+				{ TEXT("UI"), TEXT("MaterialExpressionSubstrateUI"), true },
+				{ TEXT("ConvertMaterialAttributes"), TEXT("MaterialExpressionSubstrateConvertMaterialAttributes"), true },
+				{ TEXT("ConvertToDecal"), TEXT("MaterialExpressionSubstrateConvertToDecal"), true },
+				{ TEXT("HorizontalMix"), TEXT("MaterialExpressionSubstrateHorizontalMixing"), true },
+				{ TEXT("HorizontalMixing"), TEXT("MaterialExpressionSubstrateHorizontalMixing"), true },
+				{ TEXT("VerticalLayer"), TEXT("MaterialExpressionSubstrateVerticalLayering"), true },
+				{ TEXT("VerticalLayering"), TEXT("MaterialExpressionSubstrateVerticalLayering"), true },
+				{ TEXT("Add"), TEXT("MaterialExpressionSubstrateAdd"), true },
+				{ TEXT("Weight"), TEXT("MaterialExpressionSubstrateWeight"), true },
+				{ TEXT("Select"), TEXT("MaterialExpressionSubstrateSelect"), true },
+				{ TEXT("TransmittanceToMFP"), TEXT("MaterialExpressionSubstrateTransmittanceToMFP"), false },
+				{ TEXT("MetalnessToDiffuseAlbedoF0"), TEXT("MaterialExpressionSubstrateMetalnessToDiffuseAlbedoF0"), false },
+				{ TEXT("HazinessToSecondaryRoughness"), TEXT("MaterialExpressionSubstrateHazinessToSecondaryRoughness"), false },
+				{ TEXT("ThinFilm"), TEXT("MaterialExpressionSubstrateThinFilm"), false },
+			};
+
+			for (const FSubstrateBuiltinDescriptor& Builtin : Builtins)
+			{
+				if (FunctionName.Equals(Builtin.Name, ESearchCase::IgnoreCase))
+				{
+					return &Builtin;
+				}
+			}
+			return nullptr;
+		}
+
+		static bool IsSubstrateExpressionClass(const UClass* ExpressionClass)
+		{
+			return ExpressionClass
+				&& (ExpressionClass->IsChildOf(UMaterialExpressionSubstrateBSDF::StaticClass())
+					|| ExpressionClass->IsChildOf(UMaterialExpressionSubstrateUtilityBase::StaticClass()));
+		}
+	}
+
 	bool FCodeGraphBuilder::TryResolveVectorTransformBasis(const FString& InText, EMaterialVectorCoordTransformSource& OutSource) const
 	{
 		FString Value = UE::DreamShader::NormalizeSettingKey(InText);
@@ -126,7 +185,9 @@ namespace UE::DreamShader::Editor::Private
 		FCodeValue& OutValue,
 		FString& OutError)
 	{
-		const FString FunctionName = CalleeName.Mid(3);
+		const bool bIsSubstrateBuiltinCall = CalleeName.StartsWith(TEXT("Substrate."), ESearchCase::IgnoreCase);
+		const FString FunctionName = bIsSubstrateBuiltinCall ? CalleeName.Mid(10) : CalleeName.Mid(3);
+		const TCHAR* CallNamespace = bIsSubstrateBuiltinCall ? TEXT("Substrate") : TEXT("UE");
 
 		auto HandleIntegerLiteralArgument = [&](const TCHAR* ArgumentName, int32& TargetField) -> bool
 		{
@@ -241,7 +302,7 @@ namespace UE::DreamShader::Editor::Private
 			return true;
 		};
 
-		if (FunctionName.Equals(TEXT("StaticSwitchParameter"), ESearchCase::IgnoreCase))
+		if (!bIsSubstrateBuiltinCall && FunctionName.Equals(TEXT("StaticSwitchParameter"), ESearchCase::IgnoreCase))
 		{
 			const FCodeCallArgument* NameArgument = FindNamedArgument(Arguments, TEXT("Name"));
 			if (!NameArgument)
@@ -303,8 +364,10 @@ namespace UE::DreamShader::Editor::Private
 			return EvaluateStaticSwitchParameterCall(SwitchProperty, Arguments, OutValue, OutError);
 		}
 
-		if (FunctionName.Equals(TEXT("CollectionParam"), ESearchCase::IgnoreCase)
+		if (!bIsSubstrateBuiltinCall
+			&& (FunctionName.Equals(TEXT("CollectionParam"), ESearchCase::IgnoreCase)
 			|| FunctionName.Equals(TEXT("CollectionParameter"), ESearchCase::IgnoreCase))
+			)
 		{
 			const FCodeCallArgument* CollectionArgument = FindNamedArgument(Arguments, TEXT("Collection"));
 			if (!CollectionArgument)
@@ -420,6 +483,7 @@ namespace UE::DreamShader::Editor::Private
 			OutValue.ComponentCount = bIsVectorParameter ? 4 : 1;
 			OutValue.bIsTextureObject = false;
 			OutValue.bIsMaterialAttributes = false;
+			OutValue.bIsSubstrateMaterial = false;
 			return true;
 		}
 
@@ -460,6 +524,7 @@ namespace UE::DreamShader::Editor::Private
 			OutValue.ComponentCount = OutputComponents;
 			OutValue.bIsTextureObject = false;
 			OutValue.bIsMaterialAttributes = false;
+			OutValue.bIsSubstrateMaterial = false;
 			OutValue.bHasAuthoritativeComponentCount = true;
 			return true;
 		};
@@ -616,11 +681,14 @@ namespace UE::DreamShader::Editor::Private
 			}
 		});
 
-		for (const FUEBuiltinDescriptor& Builtin : Builtins)
+		if (!bIsSubstrateBuiltinCall)
 		{
-			if (FunctionName.Equals(Builtin.Name, ESearchCase::IgnoreCase))
+			for (const FUEBuiltinDescriptor& Builtin : Builtins)
 			{
-				return TryEvaluateRegisteredBuiltin(Builtin);
+				if (FunctionName.Equals(Builtin.Name, ESearchCase::IgnoreCase))
+				{
+					return TryEvaluateRegisteredBuiltin(Builtin);
+				}
 			}
 		}
 
@@ -628,7 +696,18 @@ namespace UE::DreamShader::Editor::Private
 		{
 			if (!Argument.bIsNamed)
 			{
-				OutError = FString::Printf(TEXT("Generic UE.%s calls require named arguments."), *FunctionName);
+				OutError = FString::Printf(TEXT("Generic %s.%s calls require named arguments."), CallNamespace, *FunctionName);
+				return false;
+			}
+		}
+
+		const FSubstrateBuiltinDescriptor* SubstrateBuiltin = nullptr;
+		if (bIsSubstrateBuiltinCall)
+		{
+			SubstrateBuiltin = FindSubstrateBuiltinDescriptor(FunctionName);
+			if (!SubstrateBuiltin)
+			{
+				OutError = FString::Printf(TEXT("Unsupported Substrate builtin call '%s' in Graph."), *CalleeName);
 				return false;
 			}
 		}
@@ -638,43 +717,61 @@ namespace UE::DreamShader::Editor::Private
 		{
 			OutputTypeArgument = FindNamedArgument(Arguments, TEXT("ResultType"));
 		}
-		if (!OutputTypeArgument)
+		if (!OutputTypeArgument && !SubstrateBuiltin)
 		{
 			OutError = FString::Printf(
-				TEXT("Unsupported UE builtin call '%s' in Graph. For generic MaterialExpression calls, add OutputType=\"float1/2/3/4/Texture2D/TextureCube/Texture2DArray/VolumeTexture\"."),
+				TEXT("Unsupported UE builtin call '%s' in Graph. For generic MaterialExpression calls, add OutputType=\"float1/2/3/4/Texture2D/TextureCube/Texture2DArray/VolumeTexture/Substrate\"."),
 				*CalleeName);
 			return false;
 		}
 
 		FString OutputTypeText;
-		if (!TryExtractLiteralText(OutputTypeArgument->Expression, OutputTypeText))
-		{
-			OutError = FString::Printf(TEXT("UE.%s OutputType must be a literal value."), *FunctionName);
-			return false;
-		}
-
 		int32 OutputComponents = 0;
 		bool bIsTextureObject = false;
 		ETextShaderTextureType TextureType = ETextShaderTextureType::Texture2D;
+		bool bIsSubstrateMaterial = false;
 		bool bHasAuthoritativeComponentCount = false;
-		if (!TryResolveCodeDeclaredType(OutputTypeText, OutputComponents, bIsTextureObject, TextureType))
+		if (SubstrateBuiltin)
 		{
-			OutError = FString::Printf(TEXT("UE.%s OutputType '%s' is not supported."), *FunctionName, *OutputTypeText);
-			return false;
+			OutputTypeText = SubstrateBuiltin->bIsSubstrateOutput ? TEXT("Substrate") : TEXT("auto");
+			OutputComponents = SubstrateBuiltin->bIsSubstrateOutput ? 0 : 1;
+			bIsSubstrateMaterial = SubstrateBuiltin->bIsSubstrateOutput;
 		}
-
-		FString ClassSpecifier = FunctionName;
-		if (const FCodeCallArgument* ClassArgument = FindNamedArgument(Arguments, TEXT("Class")))
+		else
 		{
-			if (!TryExtractLiteralText(ClassArgument->Expression, ClassSpecifier))
+			if (!TryExtractLiteralText(OutputTypeArgument->Expression, OutputTypeText))
 			{
-				OutError = FString::Printf(TEXT("UE.%s Class must be a literal value."), *FunctionName);
+				OutError = FString::Printf(TEXT("UE.%s OutputType must be a literal value."), *FunctionName);
+				return false;
+			}
+
+			if (!TryResolveCodeDeclaredType(OutputTypeText, OutputComponents, bIsTextureObject, TextureType, bIsSubstrateMaterial))
+			{
+				OutError = FString::Printf(TEXT("UE.%s OutputType '%s' is not supported."), *FunctionName, *OutputTypeText);
 				return false;
 			}
 		}
-		else if (FunctionName.Equals(TEXT("Expression"), ESearchCase::IgnoreCase))
+
+		FString ClassSpecifier = SubstrateBuiltin ? FString(SubstrateBuiltin->ClassName) : FunctionName;
+		if (!SubstrateBuiltin)
 		{
-			OutError = TEXT("UE.Expression requires Class=\"MaterialExpressionName\".");
+			if (const FCodeCallArgument* ClassArgument = FindNamedArgument(Arguments, TEXT("Class")))
+			{
+				if (!TryExtractLiteralText(ClassArgument->Expression, ClassSpecifier))
+				{
+					OutError = FString::Printf(TEXT("UE.%s Class must be a literal value."), *FunctionName);
+					return false;
+				}
+			}
+			else if (FunctionName.Equals(TEXT("Expression"), ESearchCase::IgnoreCase))
+			{
+				OutError = TEXT("UE.Expression requires Class=\"MaterialExpressionName\".");
+				return false;
+			}
+		}
+		else if (FindNamedArgument(Arguments, TEXT("Class")))
+		{
+			OutError = FString::Printf(TEXT("Substrate.%s uses a fixed MaterialExpression class and does not accept Class."), *FunctionName);
 			return false;
 		}
 
@@ -682,6 +779,11 @@ namespace UE::DreamShader::Editor::Private
 		if (!ExpressionClass)
 		{
 			OutError = FString::Printf(TEXT("UE.%s could not resolve MaterialExpression class '%s'."), *FunctionName, *ClassSpecifier);
+			return false;
+		}
+		if (SubstrateBuiltin && !IsSubstrateExpressionClass(ExpressionClass))
+		{
+			OutError = FString::Printf(TEXT("Substrate.%s resolved to non-Substrate class '%s'."), *FunctionName, *ExpressionClass->GetName());
 			return false;
 		}
 
@@ -710,7 +812,7 @@ namespace UE::DreamShader::Editor::Private
 			ExcludedReuseArguments.Add(UE::DreamShader::NormalizeSettingKey(TEXT("OutputName")));
 			ExcludedReuseArguments.Add(UE::DreamShader::NormalizeSettingKey(TEXT("OutputIndex")));
 
-			if (TryBuildReusableCallKey(TEXT("UE"), FunctionName, Arguments, ExcludedReuseArguments, ExpressionReuseKey))
+			if (TryBuildReusableCallKey(CallNamespace, FunctionName, Arguments, ExcludedReuseArguments, ExpressionReuseKey))
 			{
 				ExpressionReuseKey = FString::Printf(
 					TEXT("%s|Class=%s|OutputType=%s"),
@@ -764,6 +866,11 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		UMaterialExpressionCustom* CustomExpression = Cast<UMaterialExpressionCustom>(Expression);
+		if (CustomExpression && bIsSubstrateMaterial)
+		{
+			OutError = FString::Printf(TEXT("UE.%s OutputType=\"Substrate\" is not supported by UMaterialExpressionCustom."), *FunctionName);
+			return false;
+		}
 		if (CustomExpression && !bReusedExpressionNode)
 		{
 			ECustomMaterialOutputType CustomOutputType = CMOT_Float1;
@@ -792,6 +899,7 @@ namespace UE::DreamShader::Editor::Private
 			}
 
 			FExpressionInput* BoundInputByPinName = nullptr;
+			int32 BoundInputIndexByPinName = INDEX_NONE;
 			for (int32 InputIndex = 0; InputIndex < Expression->CountInputs(); ++InputIndex)
 			{
 				FExpressionInput* CandidateInput = Expression->GetInput(InputIndex);
@@ -801,6 +909,7 @@ namespace UE::DreamShader::Editor::Private
 					&& UE::DreamShader::NormalizeSettingKey(InputName.ToString()) == NormalizedArgumentName)
 				{
 					BoundInputByPinName = CandidateInput;
+					BoundInputIndexByPinName = InputIndex;
 					break;
 				}
 			}
@@ -818,6 +927,11 @@ namespace UE::DreamShader::Editor::Private
 				if (!EvaluateExpression(Argument.Expression, InputValue, OutError))
 				{
 					OutError = FString::Printf(TEXT("UE.%s input '%s': %s"), *FunctionName, *Argument.Name, *OutError);
+					return false;
+				}
+				if (InputValue.bIsSubstrateMaterial)
+				{
+					OutError = FString::Printf(TEXT("UE.%s Custom input '%s' does not accept Substrate values."), *FunctionName, *Argument.Name);
 					return false;
 				}
 
@@ -853,6 +967,49 @@ namespace UE::DreamShader::Editor::Private
 				{
 					OutError = FString::Printf(TEXT("UE.%s failed to bind input '%s'."), *FunctionName, *Argument.Name);
 					return false;
+				}
+
+				int32 BoundInputIndex = BoundInputIndexByPinName;
+				if (BoundInputIndex == INDEX_NONE)
+				{
+					for (int32 InputIndex = 0; InputIndex < Expression->CountInputs(); ++InputIndex)
+					{
+						if (Expression->GetInput(InputIndex) == Input)
+						{
+							BoundInputIndex = InputIndex;
+							break;
+						}
+					}
+				}
+				if (BoundInputIndex != INDEX_NONE)
+				{
+					const EMaterialValueType InputValueType = Expression->GetInputValueType(BoundInputIndex);
+					if (InputValueType == MCT_Substrate)
+					{
+						if (!InputValue.bIsSubstrateMaterial)
+						{
+							OutError = FString::Printf(TEXT("%s.%s input '%s' expects a Substrate value."), CallNamespace, *FunctionName, *Argument.Name);
+							return false;
+						}
+					}
+					else if (InputValueType == MCT_MaterialAttributes)
+					{
+						if (!InputValue.bIsMaterialAttributes)
+						{
+							OutError = FString::Printf(TEXT("%s.%s input '%s' expects a MaterialAttributes value."), CallNamespace, *FunctionName, *Argument.Name);
+							return false;
+						}
+					}
+					else if (InputValue.bIsSubstrateMaterial)
+					{
+						OutError = FString::Printf(TEXT("%s.%s input '%s' does not accept Substrate values."), CallNamespace, *FunctionName, *Argument.Name);
+						return false;
+					}
+					else if (InputValue.bIsMaterialAttributes)
+					{
+						OutError = FString::Printf(TEXT("%s.%s input '%s' does not accept MaterialAttributes values."), CallNamespace, *FunctionName, *Argument.Name);
+						return false;
+					}
 				}
 
 				ConnectCodeValueToInput(*Input, InputValue);
@@ -1030,7 +1187,7 @@ namespace UE::DreamShader::Editor::Private
 
 		auto ApplyNumericInputComponentCount = [&OutputComponents, &bIsTextureObject, &bHasAuthoritativeComponentCount](const FCodeValue* InputValue)
 		{
-			if (InputValue && !InputValue->bIsTextureObject && !InputValue->bIsMaterialAttributes && InputValue->ComponentCount > 0)
+			if (InputValue && !InputValue->bIsTextureObject && !InputValue->bIsMaterialAttributes && !InputValue->bIsSubstrateMaterial && InputValue->ComponentCount > 0)
 			{
 				OutputComponents = InputValue->ComponentCount;
 				bIsTextureObject = false;
@@ -1043,7 +1200,7 @@ namespace UE::DreamShader::Editor::Private
 			int32 MaxComponentCount = 0;
 			for (const FCodeValue* InputValue : { FirstInput, SecondInput })
 			{
-				if (InputValue && !InputValue->bIsTextureObject && !InputValue->bIsMaterialAttributes)
+				if (InputValue && !InputValue->bIsTextureObject && !InputValue->bIsMaterialAttributes && !InputValue->bIsSubstrateMaterial)
 				{
 					MaxComponentCount = FMath::Max(MaxComponentCount, InputValue->ComponentCount);
 				}
@@ -1056,7 +1213,46 @@ namespace UE::DreamShader::Editor::Private
 			}
 		};
 
-		if (Expression->IsA<UMaterialExpressionTextureCoordinate>()
+		const EMaterialValueType ActualOutputValueType = Expression->GetOutputValueType(ResolvedOutputIndex);
+		if (bIsSubstrateMaterial && ActualOutputValueType != MCT_Substrate)
+		{
+			OutError = FString::Printf(TEXT("%s.%s output is not a Substrate value."), CallNamespace, *FunctionName);
+			return false;
+		}
+
+		if (ActualOutputValueType == MCT_Substrate)
+		{
+			OutputComponents = 0;
+			bIsTextureObject = false;
+			bIsSubstrateMaterial = true;
+			bHasAuthoritativeComponentCount = true;
+		}
+		else if (ActualOutputValueType == MCT_MaterialAttributes)
+		{
+			OutputComponents = 0;
+			bIsTextureObject = false;
+			bIsSubstrateMaterial = false;
+			bHasAuthoritativeComponentCount = true;
+		}
+		else if (IsTextureMaterialValueType(ActualOutputValueType))
+		{
+			OutputComponents = 0;
+			bIsTextureObject = true;
+			bIsSubstrateMaterial = false;
+			bHasAuthoritativeComponentCount = true;
+		}
+		else if (SubstrateBuiltin)
+		{
+			const int32 ActualOutputComponents = GetComponentCountForMaterialValueType(ActualOutputValueType);
+			if (ActualOutputComponents > 0)
+			{
+				OutputComponents = ActualOutputComponents;
+				bIsTextureObject = false;
+				bIsSubstrateMaterial = false;
+				bHasAuthoritativeComponentCount = true;
+			}
+		}
+		else if (Expression->IsA<UMaterialExpressionTextureCoordinate>()
 			|| Expression->IsA<UMaterialExpressionPanner>()
 			|| Expression->GetClass()->GetName().Equals(TEXT("MaterialExpressionRotator"), ESearchCase::IgnoreCase))
 		{
@@ -1086,7 +1282,7 @@ namespace UE::DreamShader::Editor::Private
 			for (const TCHAR* BranchInputName : { TEXT("AGreaterThanB"), TEXT("AEqualsB"), TEXT("ALessThanB") })
 			{
 				const FCodeValue* BranchValue = FindBoundInputValue(BranchInputName);
-				if (BranchValue && !BranchValue->bIsTextureObject && !BranchValue->bIsMaterialAttributes)
+				if (BranchValue && !BranchValue->bIsTextureObject && !BranchValue->bIsMaterialAttributes && !BranchValue->bIsSubstrateMaterial)
 				{
 					MaxBranchComponentCount = FMath::Max(MaxBranchComponentCount, BranchValue->ComponentCount);
 				}
@@ -1129,7 +1325,8 @@ namespace UE::DreamShader::Editor::Private
 		OutValue.ComponentCount = OutputComponents;
 		OutValue.bIsTextureObject = bIsTextureObject;
 		OutValue.TextureType = TextureType;
-		OutValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject);
+		OutValue.bIsMaterialAttributes = IsMaterialAttributesComponentType(OutputComponents, bIsTextureObject, bIsSubstrateMaterial);
+		OutValue.bIsSubstrateMaterial = bIsSubstrateMaterial;
 		OutValue.bHasAuthoritativeComponentCount = bHasAuthoritativeComponentCount;
 		if (!OutValue.bHasAuthoritativeComponentCount && !bIsTextureObject && OutputComponents > 0)
 		{

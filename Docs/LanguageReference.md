@@ -395,6 +395,21 @@ Graph = {
 
 当 `Shader` 绑定 `Base.MaterialAttributes` 时，生成器会自动启用 Unreal 材质的 `Use Material Attributes`。
 
+`Substrate` 可以作为 ShaderFunction / `.dsf` / VirtualFunction 的输入输出类型，也可以在 `Shader` 中绑定到 `Base.FrontMaterial`：
+
+```c
+Outputs = {
+    Substrate Surface;
+    Base.FrontMaterial = Surface;
+}
+
+Graph = {
+    Surface = Substrate.Unlit(EmissiveColor=Color);
+}
+```
+
+当 `Shader` 绑定 `Base.FrontMaterial` 时，生成器会自动设置 `ShadingModel="Substrate"`。不要在同一个 `Shader` 中同时绑定 `Base.FrontMaterial` 和 `Base.MaterialAttributes`。
+
 ### 3.4 `Settings`
 
 配置 Unreal 材质或 Material Function 属性。
@@ -434,14 +449,31 @@ Options = {
 - 标量、向量构造。
 - Brace initializer。
 - `UE.*` builtin 调用。
+- `Substrate.*` UE 5.7 Substrate 节点封装。
 - `UE.CollectionParam(Collection=Path(...), Parameter="Name")` 读取 Material Parameter Collection。
 - `UE.StaticSwitchParameter(...)` 或 `StaticSwitchParameter` 属性调用。
 - `Function(...)` / `Namespace::Function(...)` 独立调用。
 - `GraphFunction(...)` / `Namespace::GraphFunction(...)` Custom 节点调用。
 - `ShaderFunction(...)` / `VirtualFunction(...)` 值调用和多输出独立调用。
 - `MaterialAttributes` 聚合值，以及 `Attrs.BaseColor = ...` / `Attrs.Roughness = ...` 形式的成员写入。
+- `Substrate` 值和 `Base.FrontMaterial` 输出；`Substrate` 不能参与算术、向量构造、swizzle 或 `if` 分支合并。
 - 基础 `if` / `else` 图分支。
 - 将结果绑定到输出变量。
+
+常用 `Substrate.*` wrapper：
+
+```c
+Graph = {
+    Substrate unlit = Substrate.Unlit(EmissiveColor=float3(0.1, 0.6, 1.0));
+    Substrate slab = Substrate.Slab(
+        DiffuseAlbedo=float3(0.8, 0.2, 0.1),
+        F0=float3(0.04, 0.04, 0.04),
+        Roughness=0.45);
+    Substrate layered = Substrate.VerticalLayer(Top=unlit, Base=slab, Thickness=0.01);
+}
+```
+
+`Substrate.ConvertMaterialAttributes(Attributes=Attrs)` 可把现有 `MaterialAttributes` 图转成 `Substrate`。`Substrate.TransmittanceToMFP`、`Substrate.MetalnessToDiffuseAlbedoF0`、`Substrate.HazinessToSecondaryRoughness`、`Substrate.ThinFilm` 是工具节点，返回普通数值输出。需要逃生口时可以使用 `UE.Expression(Class="MaterialExpressionSubstrateSlabBSDF", OutputType="Substrate", ...)`；`UMaterialExpressionCustom` 不支持 `OutputType="Substrate"`。
 
 `ShaderFunction` / `VirtualFunction` 多输出独立调用使用“输入参数在前，输出目标变量在后”的顺序：
 

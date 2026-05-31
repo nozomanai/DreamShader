@@ -115,6 +115,7 @@ namespace UE::DreamShader::Editor::Private
 		Value.ComponentCount = ComponentCount;
 		Value.bIsTextureObject = false;
 		Value.bIsMaterialAttributes = false;
+		Value.bIsSubstrateMaterial = false;
 		return true;
 	}
 
@@ -185,9 +186,19 @@ namespace UE::DreamShader::Editor::Private
 		return false;
 	}
 
-	inline bool IsMaterialAttributesComponentType(const int32 ComponentCount, const bool bIsTextureObject)
+	inline bool IsMaterialAttributesComponentType(const int32 ComponentCount, const bool bIsTextureObject, const bool bIsSubstrateMaterial = false)
 	{
-		return ComponentCount == 0 && !bIsTextureObject;
+		return ComponentCount == 0 && !bIsTextureObject && !bIsSubstrateMaterial;
+	}
+
+	inline bool IsSpecialNonNumericCodeValue(const FCodeValue& Value)
+	{
+		return Value.bIsTextureObject || Value.bIsMaterialAttributes || Value.bIsSubstrateMaterial;
+	}
+
+	inline bool IsNumericCodeValue(const FCodeValue& Value)
+	{
+		return !IsSpecialNonNumericCodeValue(Value) && Value.ComponentCount > 0;
 	}
 
 	inline bool IsTextureMaterialValueType(const EMaterialValueType ValueType)
@@ -242,6 +253,12 @@ namespace UE::DreamShader::Editor::Private
 			return true;
 		}
 		if (ValueType == MCT_MaterialAttributes)
+		{
+			OutComponentCount = 0;
+			bOutIsTextureObject = false;
+			return true;
+		}
+		if (ValueType == MCT_Substrate)
 		{
 			OutComponentCount = 0;
 			bOutIsTextureObject = false;

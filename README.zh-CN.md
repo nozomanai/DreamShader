@@ -253,6 +253,23 @@ Graph = {
 }
 ```
 
+### Substrate
+
+`Substrate` 可以作为 Graph 值、`.dsf` / `ShaderFunction` / `VirtualFunction` 输入输出，以及通过 `Base.FrontMaterial` 绑定到材质输出。绑定 `Base.FrontMaterial` 时，生成器会把材质设为 Substrate shading model，除非已经显式写了 `ShadingModel="Substrate"` / `"Strata"`。
+
+```c
+Outputs = {
+    Substrate Surface;
+    Base.FrontMaterial = Surface;
+}
+
+Graph = {
+    Surface = Substrate.Unlit(EmissiveColor=Color);
+}
+```
+
+推荐使用 `Substrate.*` 封装调用 UE 5.7 Substrate 节点，例如 `Unlit`、`Slab`、`ConvertMaterialAttributes`、`VerticalLayer`、`Add`、`Weight`、`Select`，以及 `ThinFilm` 等工具节点。非 Custom 材质表达式也可以通过 `UE.Expression(..., OutputType="Substrate")` 作为逃生口。
+
 ### Material Layer
 
 `ShaderLayer` 和 `ShaderLayerBlend` 会生成 Unreal 原生 Material Layer 函数资产。
@@ -392,7 +409,6 @@ git push origin v1.3.9
 
 - Custom full-screen render pass 支持。
 - 更完整的 VSCode 语义诊断。
-- 完整 Substrate 支持。
 - 更深入的 Material Layer 工作流支持。
 - 更深入的 Moon Engine 集成。参考：<https://zhuanlan.zhihu.com/p/21979494450>
 

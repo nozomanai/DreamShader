@@ -253,6 +253,23 @@ Graph = {
 }
 ```
 
+### Substrate
+
+`Substrate` can be used as a graph value, a `.dsf` / `ShaderFunction` / `VirtualFunction` input or output, and a material output binding through `Base.FrontMaterial`. Binding `Base.FrontMaterial` sets the generated material to the Substrate shading model unless `ShadingModel="Substrate"` / `"Strata"` is already set.
+
+```c
+Outputs = {
+    Substrate Surface;
+    Base.FrontMaterial = Surface;
+}
+
+Graph = {
+    Surface = Substrate.Unlit(EmissiveColor=Color);
+}
+```
+
+Use `Substrate.*` wrappers for UE 5.7 Substrate nodes such as `Unlit`, `Slab`, `ConvertMaterialAttributes`, `VerticalLayer`, `Add`, `Weight`, `Select`, and utility nodes like `ThinFilm`. Generic `UE.Expression(..., OutputType="Substrate")` is also supported for non-Custom material expressions.
+
 ### Material Layers
 
 `ShaderLayer` and `ShaderLayerBlend` generate native Unreal Material Layer function assets.
@@ -392,7 +409,6 @@ The release archive is named `DreamShader-<Version>.zip` and contains the plugin
 
 - Custom full-screen render pass support.
 - More complete VSCode semantic diagnostics.
-- Full Substrate support.
 - Deeper Material Layer workflow support.
 - Deeper Moon Engine integration. Reference: <https://zhuanlan.zhihu.com/p/21979494450>
 
