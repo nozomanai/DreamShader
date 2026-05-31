@@ -148,7 +148,7 @@ This produces `/MyPlugin/DreamMaterials/M_Minimal.M_Minimal` and saves the asset
 | Item | Purpose |
 | :--- | :------ |
 | `.dsm` | Material implementation file. Usually contains `Shader`, `ShaderFunction`, `ShaderLayer`, `ShaderLayerBlend`, or `VirtualFunction` blocks. |
-| `.dsf` | Dream Shader Function file. Generates reusable `ShaderFunction` assets that can be imported by `.dsm` files. |
+| `.dsf` | Dream Shader Function file. Generates reusable `ShaderFunction`, `ShaderLayer`, and `ShaderLayerBlend` assets that can be imported by `.dsm` files. |
 | `.dsh` | Shared header file. Usually contains `import`, `Function`, `GraphFunction`, `Namespace`, and `VirtualFunction` declarations. |
 | `Shader` | Generates an Unreal `UMaterial`. |
 | `ShaderFunction` | Generates an Unreal `UMaterialFunction`. |
@@ -276,8 +276,9 @@ Current rules:
 - `ShaderLayer` creates `UMaterialFunctionMaterialLayer`.
 - `ShaderLayerBlend` creates `UMaterialFunctionMaterialLayerBlend`.
 - Both reuse the `ShaderFunction` sections: `Properties`, `Inputs`, `Outputs`, `Settings`, and `Graph`.
+- `ShaderLayer` may declare at most one input, and that input must be `MaterialAttributes`; use `Properties` for layer controls.
 - Both must declare exactly one `MaterialAttributes` output.
-- `ShaderLayerBlend` must declare at least two `MaterialAttributes` inputs.
+- `ShaderLayerBlend` must declare exactly two inputs, both `MaterialAttributes`; use `Properties` for blend controls.
 - Legacy `MaterialLayer(...)` and `MaterialLayerBlend(...)` syntax still parses, but emits deprecation warnings.
 
 This is native layer-function generation. Full Material Layer Stack and Layer Instance workflow support is still on the roadmap.

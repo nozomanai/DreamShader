@@ -346,16 +346,14 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		UClass* ExpectedClass = UMaterialFunction::StaticClass();
-		const TCHAR* ExpectedKindText = TEXT("ShaderFunction");
+		const TCHAR* ExpectedKindText = UE::DreamShader::LexToString(Definition.Kind);
 		if (Definition.Kind == ETextShaderMaterialFunctionKind::MaterialLayer)
 		{
 			ExpectedClass = UMaterialFunctionMaterialLayer::StaticClass();
-			ExpectedKindText = TEXT("ShaderLayer");
 		}
 		else if (Definition.Kind == ETextShaderMaterialFunctionKind::MaterialLayerBlend)
 		{
 			ExpectedClass = UMaterialFunctionMaterialLayerBlend::StaticClass();
-			ExpectedKindText = TEXT("ShaderLayerBlend");
 		}
 
 		if (UObject* ExistingObject = LoadObject<UObject>(nullptr, *ObjectPath))

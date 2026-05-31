@@ -1115,7 +1115,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		return EvaluateMaterialFunctionCallAsset(
-			TEXT("ShaderFunction"),
+			UE::DreamShader::LexToString(Function.Kind),
 			Function.Name,
 			ObjectPath,
 			Function.Inputs,
@@ -1163,7 +1163,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 
 		return ExecuteMaterialFunctionCallAsset(
-			TEXT("ShaderFunction"),
+			UE::DreamShader::LexToString(Function.Kind),
 			Function.Name,
 			ObjectPath,
 			Function.Inputs,

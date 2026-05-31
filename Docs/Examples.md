@@ -1,6 +1,6 @@
 # DreamShaderLang 示例与模式
 
-本页提供可复制的 DreamShaderLang 片段。示例按常见工作流排列：最小材质、共享头文件、Package、函数调用、Graph 语法、UE 节点、`ShaderFunction` 和 `VirtualFunction`。
+本页提供可复制的 DreamShaderLang 片段。示例按常见工作流排列：最小材质、共享头文件、Package、函数调用、Graph 语法、UE 节点、`ShaderFunction`、`ShaderLayer` / `ShaderLayerBlend` 和 `VirtualFunction`。
 
 ## 1. 最小材质
 
@@ -227,7 +227,44 @@ ShaderFunction(Name="Functions/F_Tint")
 }
 ```
 
-## 12. `VirtualFunction`
+## 12. `ShaderLayer` / `ShaderLayerBlend`
+
+```c
+ShaderLayer(Name="Layers/L_SimpleSurface")
+{
+    Outputs = {
+        MaterialAttributes Attrs;
+    }
+
+    Graph = {
+        Attrs.BaseColor = vec3(0.8, 0.2, 0.1);
+        Attrs.Roughness = 0.5;
+    }
+}
+
+ShaderLayerBlend(Name="Layers/LB_Overlay")
+{
+    Properties = {
+        float Alpha = 0.5;
+    }
+
+    Inputs = {
+        MaterialAttributes Bottom;
+        MaterialAttributes Top;
+    }
+
+    Outputs = {
+        MaterialAttributes Attrs;
+    }
+
+    Graph = {
+        Attrs.BaseColor = lerp(Bottom.BaseColor, Top.BaseColor, Alpha);
+        Attrs.Roughness = lerp(Bottom.Roughness, Top.Roughness, Alpha);
+    }
+}
+```
+
+## 13. `VirtualFunction`
 
 `VirtualFunction` 用来声明项目里已经存在的 `UMaterialFunction`，不会生成或覆盖资产。
 

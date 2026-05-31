@@ -1617,12 +1617,12 @@ namespace UE::DreamShader::Private
 			}
 			else if (SectionName.Equals(TEXT("Code"), ESearchCase::IgnoreCase))
 			{
-				OutError = TEXT("ShaderFunction graph sections now use Graph = { ... }. Function Code = { ... } is still supported.");
+				OutError = TEXT("ShaderFunction, ShaderLayer, and ShaderLayerBlend graph sections now use Graph = { ... }. Function Code = { ... } is still supported.");
 				return false;
 			}
 			else
 			{
-				OutError = FString::Printf(TEXT("Unknown ShaderFunction section '%s'."), *SectionName);
+				OutError = FString::Printf(TEXT("Unknown material function section '%s'."), *SectionName);
 				return false;
 			}
 

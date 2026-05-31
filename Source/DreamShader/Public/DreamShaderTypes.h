@@ -133,6 +133,20 @@ namespace UE::DreamShader
 		MaterialLayerBlend,
 	};
 
+	inline const TCHAR* LexToString(const ETextShaderMaterialFunctionKind Kind)
+	{
+		switch (Kind)
+		{
+		case ETextShaderMaterialFunctionKind::MaterialLayer:
+			return TEXT("ShaderLayer");
+		case ETextShaderMaterialFunctionKind::MaterialLayerBlend:
+			return TEXT("ShaderLayerBlend");
+		case ETextShaderMaterialFunctionKind::ShaderFunction:
+		default:
+			return TEXT("ShaderFunction");
+		}
+	}
+
 	struct FTextShaderMaterialFunctionDefinition
 	{
 		FString Name;

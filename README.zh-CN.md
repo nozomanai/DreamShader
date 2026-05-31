@@ -148,7 +148,7 @@ Shader(Name="DreamMaterials/M_Minimal", Root="Plugin.MyPlugin")
 | 项目 | 用途 |
 | :--- | :--- |
 | `.dsm` | 材质实现文件，通常包含 `Shader`、`ShaderFunction`、`ShaderLayer`、`ShaderLayerBlend` 或 `VirtualFunction`。 |
-| `.dsf` | Dream Shader Function 文件，用于生成可复用 `ShaderFunction` 资产，并可被 `.dsm` 导入。 |
+| `.dsf` | Dream Shader Function 文件，用于生成可复用 `ShaderFunction`、`ShaderLayer` 和 `ShaderLayerBlend` 资产，并可被 `.dsm` 导入。 |
 | `.dsh` | 共享头文件，通常包含 `import`、`Function`、`GraphFunction`、`Namespace` 和 `VirtualFunction` 声明。 |
 | `Shader` | 生成 Unreal `UMaterial`。 |
 | `ShaderFunction` | 生成 Unreal `UMaterialFunction`。 |
@@ -276,8 +276,9 @@ ShaderLayer(Name="Layers/L_SimpleSurface")
 - `ShaderLayer` 创建 `UMaterialFunctionMaterialLayer`。
 - `ShaderLayerBlend` 创建 `UMaterialFunctionMaterialLayerBlend`。
 - 两者复用 `ShaderFunction` 的 `Properties`、`Inputs`、`Outputs`、`Settings` 和 `Graph` sections。
+- `ShaderLayer` 最多只能声明一个输入，且该输入必须是 `MaterialAttributes`；层控制量请使用 `Properties`。
 - 两者必须声明且只声明一个 `MaterialAttributes` 输出。
-- `ShaderLayerBlend` 必须至少声明两个 `MaterialAttributes` 输入。
+- `ShaderLayerBlend` 必须刚好声明两个输入，且都必须是 `MaterialAttributes`；混合控制量请使用 `Properties`。
 - 旧语法 `MaterialLayer(...)` 和 `MaterialLayerBlend(...)` 仍可解析，但会产生废弃警告。
 
 当前支持的是原生 Layer Function 资产生成；完整 Material Layer Stack 和 Layer Instance 工作流仍在 Roadmap 中。

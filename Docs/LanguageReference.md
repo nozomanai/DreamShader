@@ -27,16 +27,18 @@ Dream Shader Material。用于生成资产，通常包含：
 
 ### 1.2 `.dsf`
 
-Dream Shader Function。用于生成可复用 Unreal `UMaterialFunction` 资产，通常包含：
+Dream Shader Function。用于生成可复用 Unreal `UMaterialFunction`、Material Layer 和 Material Layer Blend 资产，通常包含：
 
 - `import "Shared/Common.dsh";`
 - `import "OtherFunction.dsf";`
 - `ShaderFunction(Name="...")`
+- `ShaderLayer(Name="...")`
+- `ShaderLayerBlend(Name="...")`
 - `Function Name(...) { ... }`
 - `GraphFunction Name(...) { ... }`
 - `VirtualFunction(Name="...")`
 
-`.dsf` 可以被 `.dsm` 或其他 `.dsf` 导入。导入后，文件中的 `ShaderFunction` 会先生成资产，再作为当前 Graph 可调用的函数签名参与生成。`.dsf` 不允许声明顶层 `Shader(...)`。
+`.dsf` 可以被 `.dsm` 或其他 `.dsf` 导入。导入后，文件中的 `ShaderFunction`、`ShaderLayer` 和 `ShaderLayerBlend` 会先生成资产，再作为当前 Graph 可调用的函数签名参与生成。`.dsf` 不允许声明顶层 `Shader(...)`。
 
 ### 1.3 `.dsh`
 
@@ -140,8 +142,9 @@ ShaderFunction(Name="Functions/F_Tint", Root="Plugin.MyPlugin")
 - `ShaderLayer` 会创建 `UMaterialFunctionMaterialLayer` 资产。
 - `ShaderLayerBlend` 会创建 `UMaterialFunctionMaterialLayerBlend` 资产。
 - 两者复用 `ShaderFunction` 的 `Properties`、`Inputs`、`Outputs`、`Settings` 和 `Graph` sections。
+- `ShaderLayer` 最多只能声明一个输入，且该输入必须是 `MaterialAttributes`；层控制量请使用 `Properties`。
 - `ShaderLayer` / `ShaderLayerBlend` 必须声明且只声明一个 `MaterialAttributes` 输出。
-- `ShaderLayerBlend` 至少需要两个 `MaterialAttributes` 输入。
+- `ShaderLayerBlend` 必须刚好声明两个输入，且都必须是 `MaterialAttributes`；混合控制量请使用 `Properties`。
 
 ### 2.4 `VirtualFunction(Name="...")`
 
@@ -697,7 +700,7 @@ DreamShader 会维护源文件和资产之间的关系：
 
 - `.dsm` 直接生成资产。
 - `.dsh` 不直接生成资产。
-- `.dsf` 会生成其中声明的 `ShaderFunction` 资产。
+- `.dsf` 会生成其中声明的 `ShaderFunction`、`ShaderLayer` 和 `ShaderLayerBlend` 资产。
 - `.dsh` / `.dsf` 保存后只重编依赖它们的 `.dsm` / `.dsf`。
 - Parser 错误会尽量通过 source map 映射回真实 `.dsm` / `.dsf` / `.dsh` 行列。
 - 生成资产会写入 `DreamShader.SourceFile`、`DreamShader.SourceHash`、`DreamShader.GeneratedAtUtc`。

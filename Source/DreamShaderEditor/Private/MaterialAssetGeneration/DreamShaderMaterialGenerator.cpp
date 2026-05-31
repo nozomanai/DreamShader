@@ -14,8 +14,10 @@
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionMaterialAttributeLayers.h"
 #include "Materials/MaterialExpressionMakeMaterialAttributes.h"
 #include "Materials/MaterialFunction.h"
+#include "Materials/MaterialFunctionMaterialLayerBlend.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
@@ -1077,7 +1079,7 @@ namespace UE::DreamShader::Editor
 					|| SanitizedSourceText.Contains(TEXT("MaterialLayer("), ESearchCase::IgnoreCase)
 					|| SanitizedSourceText.Contains(TEXT("MaterialLayerBlend("), ESearchCase::IgnoreCase)))
 			{
-				OutError = FString::Printf(TEXT("DreamShader header '%s' may only declare Function/Namespace/VirtualFunction blocks and imports."), *NormalizedPath);
+				OutError = FString::Printf(TEXT("DreamShader header '%s' may only declare Function/Namespace/GraphFunction/VirtualFunction blocks and imports."), *NormalizedPath);
 				return false;
 			}
 
@@ -1314,16 +1316,7 @@ namespace UE::DreamShader::Editor
 
 		const TCHAR* GetMaterialFunctionBlockKindText(const ETextShaderMaterialFunctionKind Kind)
 		{
-			switch (Kind)
-			{
-			case ETextShaderMaterialFunctionKind::MaterialLayer:
-				return TEXT("ShaderLayer");
-			case ETextShaderMaterialFunctionKind::MaterialLayerBlend:
-				return TEXT("ShaderLayerBlend");
-			case ETextShaderMaterialFunctionKind::ShaderFunction:
-			default:
-				return TEXT("ShaderFunction");
-			}
+			return UE::DreamShader::LexToString(Kind);
 		}
 
 		EMaterialFunctionUsage GetUnrealMaterialFunctionUsage(const ETextShaderMaterialFunctionKind Kind)
@@ -1340,6 +1333,41 @@ namespace UE::DreamShader::Editor
 			}
 		}
 
+		EBlendInputRelevance ResolveMaterialLayerBlendInputRelevance(
+			const FTextShaderMaterialFunctionDefinition& FunctionDefinition,
+			const FTextShaderFunctionParameter& InputDefinition,
+			const int32 MaterialAttributesInputIndex)
+		{
+			if (FunctionDefinition.Kind != ETextShaderMaterialFunctionKind::MaterialLayerBlend
+				|| !Private::IsMaterialAttributesType(InputDefinition.Type))
+			{
+				return EBlendInputRelevance::General;
+			}
+
+			FString NormalizedInputName = InputDefinition.Name;
+			NormalizedInputName.ReplaceInline(TEXT(" "), TEXT(""));
+			NormalizedInputName.ReplaceInline(TEXT("_"), TEXT(""));
+			NormalizedInputName.ReplaceInline(TEXT("-"), TEXT(""));
+			if (NormalizedInputName.Equals(TEXT("Top"), ESearchCase::IgnoreCase)
+				|| NormalizedInputName.Equals(TEXT("TopLayer"), ESearchCase::IgnoreCase)
+				|| InputDefinition.Name.Equals(TopMaterialBlendInputName, ESearchCase::IgnoreCase))
+			{
+				return EBlendInputRelevance::Top;
+			}
+			if (NormalizedInputName.Equals(TEXT("Bottom"), ESearchCase::IgnoreCase)
+				|| NormalizedInputName.Equals(TEXT("BottomLayer"), ESearchCase::IgnoreCase)
+				|| NormalizedInputName.Equals(TEXT("Base"), ESearchCase::IgnoreCase)
+				|| NormalizedInputName.Equals(TEXT("BaseLayer"), ESearchCase::IgnoreCase)
+				|| InputDefinition.Name.Equals(BottomMaterialBlendInputName, ESearchCase::IgnoreCase))
+			{
+				return EBlendInputRelevance::Bottom;
+			}
+
+			return MaterialAttributesInputIndex == 0
+				? EBlendInputRelevance::Bottom
+				: EBlendInputRelevance::Top;
+		}
+
 		bool ValidateMaterialLayerFunctionDefinition(const FTextShaderMaterialFunctionDefinition& FunctionDefinition, FString& OutError)
 		{
 			const TCHAR* BlockKind = GetMaterialFunctionBlockKindText(FunctionDefinition.Kind);
@@ -1354,20 +1382,29 @@ namespace UE::DreamShader::Editor
 				return false;
 			}
 
+			int32 MaterialAttributesInputCount = 0;
+			for (const FTextShaderFunctionParameter& InputDefinition : FunctionDefinition.Inputs)
+			{
+				if (Private::IsMaterialAttributesType(InputDefinition.Type))
+				{
+					++MaterialAttributesInputCount;
+				}
+			}
+
+			if (FunctionDefinition.Kind == ETextShaderMaterialFunctionKind::MaterialLayer
+				&& (FunctionDefinition.Inputs.Num() > AcceptableNumLayerMAInputs
+					|| MaterialAttributesInputCount != FunctionDefinition.Inputs.Num()))
+			{
+				OutError = FString::Printf(TEXT("ShaderLayer '%s' must declare at most one input, and it must be MaterialAttributes. Use Properties for layer controls."), *FunctionDefinition.Name);
+				return false;
+			}
+
 			if (FunctionDefinition.Kind == ETextShaderMaterialFunctionKind::MaterialLayerBlend)
 			{
-				int32 MaterialAttributesInputCount = 0;
-				for (const FTextShaderFunctionParameter& InputDefinition : FunctionDefinition.Inputs)
+				if (FunctionDefinition.Inputs.Num() != AcceptableNumBlendMAInputs
+					|| MaterialAttributesInputCount != AcceptableNumBlendMAInputs)
 				{
-					if (Private::IsMaterialAttributesType(InputDefinition.Type))
-					{
-						++MaterialAttributesInputCount;
-					}
-				}
-
-				if (MaterialAttributesInputCount < 2)
-				{
-					OutError = FString::Printf(TEXT("ShaderLayerBlend '%s' must declare at least two MaterialAttributes inputs."), *FunctionDefinition.Name);
+					OutError = FString::Printf(TEXT("ShaderLayerBlend '%s' must declare exactly two inputs, both MaterialAttributes. Use Properties for blend controls."), *FunctionDefinition.Name);
 					return false;
 				}
 			}
@@ -1553,7 +1590,7 @@ namespace UE::DreamShader::Editor
 				bool bExposeToLibrary = false;
 				if (!Private::ParseBooleanLiteral(*ExposeToLibraryText, bExposeToLibrary))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s': ExposeToLibrary must be true or false."), *FunctionDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s': ExposeToLibrary must be true or false."), BlockKind, *FunctionDefinition.Name);
 					return false;
 				}
 				MaterialFunction->bExposeToLibrary = bExposeToLibrary ? 1U : 0U;
@@ -1606,7 +1643,8 @@ namespace UE::DreamShader::Editor
 				if (bNameConflict)
 				{
 					OutError = FString::Printf(
-						TEXT("ShaderFunction '%s' property '%s' conflicts with another property or input name."),
+						TEXT("%s '%s' property '%s' conflicts with another property or input name."),
+						BlockKind,
 						*FunctionDefinition.Name,
 						*Property.Name);
 					return false;
@@ -1617,6 +1655,7 @@ namespace UE::DreamShader::Editor
 
 			TMap<FString, UMaterialExpressionFunctionInput*> GeneratedInputExpressions;
 			int32 InputPositionY = -260;
+			int32 MaterialAttributesInputIndex = 0;
 			FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Creating inputs for '%s'..."), *FunctionDefinition.Name)));
 			for (int32 InputIndex = 0; InputIndex < FunctionDefinition.Inputs.Num(); ++InputIndex)
 			{
@@ -1632,7 +1671,7 @@ namespace UE::DreamShader::Editor
 					bIsTextureObject,
 					FunctionInputTypeValue))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' input '%s' uses unsupported type '%s'."), *FunctionDefinition.Name, *InputDefinition.Name, *InputDefinition.Type);
+					OutError = FString::Printf(TEXT("%s '%s' input '%s' uses unsupported type '%s'."), BlockKind, *FunctionDefinition.Name, *InputDefinition.Name, *InputDefinition.Type);
 					return false;
 				}
 				if (bIsTextureObject)
@@ -1644,17 +1683,25 @@ namespace UE::DreamShader::Editor
 					UMaterialEditingLibrary::CreateMaterialExpressionInFunction(MaterialFunction, UMaterialExpressionFunctionInput::StaticClass(), -800, InputPositionY));
 				if (!InputExpression)
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' failed to create input '%s'."), *FunctionDefinition.Name, *InputDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s' failed to create input '%s'."), BlockKind, *FunctionDefinition.Name, *InputDefinition.Name);
 					return false;
 				}
 
 				InputExpression->InputName = FName(*InputDefinition.Name);
 				InputExpression->InputType = static_cast<EFunctionInputType>(FunctionInputTypeValue);
+				InputExpression->BlendInputRelevance = ResolveMaterialLayerBlendInputRelevance(
+					FunctionDefinition,
+					InputDefinition,
+					MaterialAttributesInputIndex);
 				InputExpression->Description = InputDefinition.Metadata.Description;
 				InputExpression->SortPriority = InputDefinition.Metadata.bHasSortPriority
 					? InputDefinition.Metadata.SortPriority
 					: InputIndex;
 				RestoreOrGenerateFunctionInputId(InputExpression, ExistingInputIdsByName);
+				if (Private::IsMaterialAttributesType(InputDefinition.Type))
+				{
+					++MaterialAttributesInputIndex;
+				}
 
 				Private::FCodeValue InputValue;
 				InputValue.Expression = InputExpression;
@@ -1674,7 +1721,7 @@ namespace UE::DreamShader::Editor
 				const Private::FCodeValue* InputValue = GeneratedValues.Find(InputDefinition.Name);
 				if (!InputExpressionPtr || !*InputExpressionPtr || !InputValue)
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' failed to resolve generated input '%s'."), *FunctionDefinition.Name, *InputDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s' failed to resolve generated input '%s'."), BlockKind, *FunctionDefinition.Name, *InputDefinition.Name);
 					return false;
 				}
 
@@ -1692,7 +1739,7 @@ namespace UE::DreamShader::Editor
 					GeneratedValues,
 					PreviewError))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' input '%s': %s"), *FunctionDefinition.Name, *InputDefinition.Name, *PreviewError);
+					OutError = FString::Printf(TEXT("%s '%s' input '%s': %s"), BlockKind, *FunctionDefinition.Name, *InputDefinition.Name, *PreviewError);
 					return false;
 				}
 			}
@@ -1711,7 +1758,7 @@ namespace UE::DreamShader::Editor
 						MaterialAttributesSeedPositionY,
 						SeedError))
 					{
-						OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s': %s"), *FunctionDefinition.Name, *OutputDefinition.Name, *SeedError);
+						OutError = FString::Printf(TEXT("%s '%s' output '%s': %s"), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name, *SeedError);
 						return false;
 					}
 				}
@@ -1735,7 +1782,7 @@ namespace UE::DreamShader::Editor
 						CodeSourceFilePath,
 						CodeStartLine,
 						CodeStartColumn,
-						FString::Printf(TEXT("ShaderFunction '%s': %s"), *FunctionDefinition.Name, *CodeParseError),
+						FString::Printf(TEXT("%s '%s': %s"), BlockKind, *FunctionDefinition.Name, *CodeParseError),
 						CodeParseErrorLine,
 						CodeParseErrorColumn);
 					return false;
@@ -1768,7 +1815,7 @@ namespace UE::DreamShader::Editor
 				ECustomMaterialOutputType OutputType = CMOT_Float1;
 				if (!Private::TryResolveCustomOutputType(PrimaryOutput.Type, OutputType))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s' uses unsupported type '%s'."), *FunctionDefinition.Name, *PrimaryOutput.Name, *PrimaryOutput.Type);
+					OutError = FString::Printf(TEXT("%s '%s' output '%s' uses unsupported type '%s'."), BlockKind, *FunctionDefinition.Name, *PrimaryOutput.Name, *PrimaryOutput.Type);
 					return false;
 				}
 
@@ -1776,7 +1823,7 @@ namespace UE::DreamShader::Editor
 					UMaterialEditingLibrary::CreateMaterialExpressionInFunction(MaterialFunction, UMaterialExpressionCustom::StaticClass(), 120, 0));
 				if (!CustomExpression)
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' failed to create the function Custom node."), *FunctionDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s' failed to create the function Custom node."), BlockKind, *FunctionDefinition.Name);
 					return false;
 				}
 
@@ -1798,7 +1845,7 @@ namespace UE::DreamShader::Editor
 					bUsesGeneratedInclude,
 					OutError))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s': %s"), *FunctionDefinition.Name, *OutError);
+					OutError = FString::Printf(TEXT("%s '%s': %s"), BlockKind, *FunctionDefinition.Name, *OutError);
 					return false;
 				}
 				CustomExpression->Code = Private::EnsureTopLevelReturn(PreparedCustomCode);
@@ -1816,7 +1863,7 @@ namespace UE::DreamShader::Editor
 					const Private::FCodeValue* InputValue = GeneratedValues.Find(InputDefinition.Name);
 					if (!InputValue || !InputValue->Expression)
 					{
-						OutError = FString::Printf(TEXT("ShaderFunction '%s' failed to resolve generated input '%s'."), *FunctionDefinition.Name, *InputDefinition.Name);
+						OutError = FString::Printf(TEXT("%s '%s' failed to resolve generated input '%s'."), BlockKind, *FunctionDefinition.Name, *InputDefinition.Name);
 						return false;
 					}
 
@@ -1846,7 +1893,7 @@ namespace UE::DreamShader::Editor
 						PropertyExpression,
 						PropertyExpressionError))
 					{
-						OutError = FString::Printf(TEXT("ShaderFunction '%s' property '%s': %s"), *FunctionDefinition.Name, *Property.Name, *PropertyExpressionError);
+						OutError = FString::Printf(TEXT("%s '%s' property '%s': %s"), BlockKind, *FunctionDefinition.Name, *Property.Name, *PropertyExpressionError);
 						return false;
 					}
 
@@ -1862,7 +1909,7 @@ namespace UE::DreamShader::Editor
 					ECustomMaterialOutputType AdditionalOutputType = CMOT_Float1;
 					if (!Private::TryResolveCustomOutputType(OutputDefinition.Type, AdditionalOutputType))
 					{
-						OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s' uses unsupported type '%s'."), *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
+						OutError = FString::Printf(TEXT("%s '%s' output '%s' uses unsupported type '%s'."), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
 						return false;
 					}
 
@@ -1902,7 +1949,7 @@ namespace UE::DreamShader::Editor
 				const Private::FCodeValue* OutputValue = GeneratedValues.Find(OutputDefinition.Name);
 				if (!OutputValue || !OutputValue->Expression)
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s' was never assigned an expression."), *FunctionDefinition.Name, *OutputDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s' output '%s' was never assigned an expression."), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name);
 					return false;
 				}
 
@@ -1915,7 +1962,7 @@ namespace UE::DreamShader::Editor
 					bExpectedTexture,
 					IgnoredFunctionInputType))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s' uses unsupported type '%s'."), *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
+					OutError = FString::Printf(TEXT("%s '%s' output '%s' uses unsupported type '%s'."), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
 					return false;
 				}
 
@@ -1930,7 +1977,7 @@ namespace UE::DreamShader::Editor
 					|| ((ExpectedComponentCount == 0 && !bExpectedTexture) != OutputValue->bIsMaterialAttributes)
 					|| (!bExpectedTexture && ExpectedComponentCount != OutputValue->ComponentCount))
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' output '%s' does not match its declared type '%s'."), *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
+					OutError = FString::Printf(TEXT("%s '%s' output '%s' does not match its declared type '%s'."), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name, *OutputDefinition.Type);
 					return false;
 				}
 
@@ -1938,7 +1985,7 @@ namespace UE::DreamShader::Editor
 					UMaterialEditingLibrary::CreateMaterialExpressionInFunction(MaterialFunction, UMaterialExpressionFunctionOutput::StaticClass(), 900, OutputPositionY));
 				if (!OutputExpression)
 				{
-					OutError = FString::Printf(TEXT("ShaderFunction '%s' failed to create output '%s'."), *FunctionDefinition.Name, *OutputDefinition.Name);
+					OutError = FString::Printf(TEXT("%s '%s' failed to create output '%s'."), BlockKind, *FunctionDefinition.Name, *OutputDefinition.Name);
 					return false;
 				}
 

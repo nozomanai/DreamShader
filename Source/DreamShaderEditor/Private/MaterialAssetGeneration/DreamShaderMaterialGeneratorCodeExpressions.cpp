@@ -1364,7 +1364,7 @@ namespace UE::DreamShader::Editor::Private
 		if (MatchCount == 0)
 		{
 			OutError = FString::Printf(
-				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function, GraphFunction, ShaderFunction, or VirtualFunction calls may use statement syntax."),
+				TEXT("Graph expression statement '%s' is unsupported. Only DreamShader Function, GraphFunction, ShaderFunction, ShaderLayer, ShaderLayerBlend, or VirtualFunction calls may use statement syntax."),
 				*CalleeName);
 			return false;
 		}
@@ -2452,7 +2452,7 @@ namespace UE::DreamShader::Editor::Private
 		}
 		if (MaterialFunctionDefinition)
 		{
-			MatchedKinds.Add(TEXT("ShaderFunction"));
+			MatchedKinds.Add(UE::DreamShader::LexToString(MaterialFunctionDefinition->Kind));
 		}
 		if (VirtualFunctionDefinition)
 		{
