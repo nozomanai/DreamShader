@@ -131,6 +131,7 @@ namespace UE::DreamShader::Editor::Private
 
 		FDreamShaderWorkspaceService::ExportMaterialExpressionManifest();
 		FDreamShaderWorkspaceService::ExportDreamShaderSettingsManifest();
+		FDreamShaderWorkspaceService::ExportSubstrateBuiltinsManifest();
 		SyncVirtualFunctionDefinitions();
 		QueueFullScan();
 		UpdateDiagnosticsFile();
@@ -857,6 +858,7 @@ namespace UE::DreamShader::Editor::Private
 
 		FDreamShaderWorkspaceService::ExportMaterialExpressionManifest();
 		FDreamShaderWorkspaceService::ExportDreamShaderSettingsManifest();
+		FDreamShaderWorkspaceService::ExportSubstrateBuiltinsManifest();
 
 		FString WorkspaceFilePath;
 		FString Error;

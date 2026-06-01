@@ -111,6 +111,193 @@ namespace UE::DreamShader::Editor::Private
 				|| Property->HasAnyPropertyFlags(CPF_Edit);
 		}
 
+		struct FSubstrateBuiltinParameterManifestEntry
+		{
+			const TCHAR* Type = TEXT("value");
+			const TCHAR* Name = TEXT("");
+			const TCHAR* Placeholder = TEXT("");
+		};
+
+		struct FSubstrateBuiltinManifestEntry
+		{
+			const TCHAR* Name = TEXT("");
+			const TCHAR* ClassName = TEXT("");
+			const TCHAR* Detail = TEXT("");
+			const TCHAR* Example = TEXT("");
+			bool bIsSubstrateOutput = true;
+			TArray<FSubstrateBuiltinParameterManifestEntry> Parameters;
+		};
+
+		void AddParameterJson(TArray<TSharedPtr<FJsonValue>>& OutValues, const FSubstrateBuiltinParameterManifestEntry& Parameter)
+		{
+			TSharedRef<FJsonObject> ParameterObject = MakeShared<FJsonObject>();
+			ParameterObject->SetStringField(TEXT("qualifier"), TEXT("in"));
+			ParameterObject->SetStringField(TEXT("type"), Parameter.Type);
+			ParameterObject->SetStringField(TEXT("name"), Parameter.Name);
+			if (FCString::Strlen(Parameter.Placeholder) > 0)
+			{
+				ParameterObject->SetStringField(TEXT("placeholder"), Parameter.Placeholder);
+			}
+			OutValues.Add(MakeShared<FJsonValueObject>(ParameterObject));
+		}
+
+		FString BuildSubstrateSnippet(const FSubstrateBuiltinManifestEntry& Builtin)
+		{
+			FString Snippet = FString::Printf(TEXT("Substrate.%s("), Builtin.Name);
+			for (int32 Index = 0; Index < Builtin.Parameters.Num(); ++Index)
+			{
+				if (Index > 0)
+				{
+					Snippet += TEXT(", ");
+				}
+
+				const FSubstrateBuiltinParameterManifestEntry& Parameter = Builtin.Parameters[Index];
+				const FString Placeholder = FCString::Strlen(Parameter.Placeholder) > 0
+					? FString(Parameter.Placeholder)
+					: FString(Parameter.Name);
+				Snippet += FString::Printf(TEXT("%s=${%d:%s}"), Parameter.Name, Index + 1, *Placeholder);
+			}
+			Snippet += TEXT(")");
+			return Snippet;
+		}
+
+		TArray<FSubstrateBuiltinManifestEntry> BuildSubstrateBuiltinManifestEntries()
+		{
+			return {
+				{ TEXT("ShadingModels"), TEXT("MaterialExpressionSubstrateShadingModels"), TEXT("Creates a Substrate shading-model node."), TEXT("Substrate.ShadingModels()"), true, {} },
+				{ TEXT("Slab"), TEXT("MaterialExpressionSubstrateSlabBSDF"), TEXT("Creates a Substrate slab BSDF."), TEXT("Substrate.Slab(DiffuseAlbedo=Color, F0=float3(0.04, 0.04, 0.04), Roughness=0.45)"), true, {
+					{ TEXT("value"), TEXT("DiffuseAlbedo"), TEXT("Color") },
+					{ TEXT("value"), TEXT("F0"), TEXT("float3(0.04, 0.04, 0.04)") },
+					{ TEXT("value"), TEXT("Roughness"), TEXT("0.45") },
+					{ TEXT("value"), TEXT("Normal"), TEXT("Normal") }
+				} },
+				{ TEXT("SimpleClearCoat"), TEXT("MaterialExpressionSubstrateSimpleClearCoatBSDF"), TEXT("Creates a Substrate simple clear coat BSDF."), TEXT("Substrate.SimpleClearCoat(DiffuseAlbedo=Color, F0=float3(0.04, 0.04, 0.04), Roughness=0.35)"), true, {
+					{ TEXT("value"), TEXT("DiffuseAlbedo"), TEXT("Color") },
+					{ TEXT("value"), TEXT("F0"), TEXT("float3(0.04, 0.04, 0.04)") },
+					{ TEXT("value"), TEXT("Roughness"), TEXT("0.35") },
+					{ TEXT("value"), TEXT("ClearCoatCoverage"), TEXT("1.0") },
+					{ TEXT("value"), TEXT("ClearCoatRoughness"), TEXT("0.1") },
+					{ TEXT("value"), TEXT("Normal"), TEXT("Normal") }
+				} },
+				{ TEXT("VolumetricFogCloud"), TEXT("MaterialExpressionSubstrateVolumetricFogCloudBSDF"), TEXT("Creates a Substrate volumetric fog/cloud BSDF."), TEXT("Substrate.VolumetricFogCloud(Albedo=Albedo, Extinction=Extinction, EmissiveColor=EmissiveColor)"), true, {
+					{ TEXT("value"), TEXT("Albedo"), TEXT("Albedo") },
+					{ TEXT("value"), TEXT("Extinction"), TEXT("Extinction") },
+					{ TEXT("value"), TEXT("EmissiveColor"), TEXT("EmissiveColor") },
+					{ TEXT("value"), TEXT("AmbientOcclusion"), TEXT("1.0") }
+				} },
+				{ TEXT("Unlit"), TEXT("MaterialExpressionSubstrateUnlitBSDF"), TEXT("Creates a Substrate unlit BSDF."), TEXT("Substrate.Unlit(EmissiveColor=Color)"), true, {
+					{ TEXT("value"), TEXT("EmissiveColor"), TEXT("Color") }
+				} },
+				{ TEXT("Hair"), TEXT("MaterialExpressionSubstrateHairBSDF"), TEXT("Creates a Substrate hair BSDF."), TEXT("Substrate.Hair(BaseColor=Color, Roughness=0.35)"), true, {
+					{ TEXT("value"), TEXT("BaseColor"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Scatter"), TEXT("0.0") },
+					{ TEXT("value"), TEXT("Specular"), TEXT("0.5") },
+					{ TEXT("value"), TEXT("Roughness"), TEXT("0.35") },
+					{ TEXT("value"), TEXT("Backlit"), TEXT("0.0") },
+					{ TEXT("value"), TEXT("Tangent"), TEXT("Tangent") },
+					{ TEXT("value"), TEXT("EmissiveColor"), TEXT("EmissiveColor") }
+				} },
+				{ TEXT("Eye"), TEXT("MaterialExpressionSubstrateEyeBSDF"), TEXT("Creates a Substrate eye BSDF."), TEXT("Substrate.Eye(DiffuseColor=Color, Roughness=0.2)"), true, {
+					{ TEXT("value"), TEXT("DiffuseColor"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Roughness"), TEXT("0.2") },
+					{ TEXT("value"), TEXT("CorneaNormal"), TEXT("CorneaNormal") },
+					{ TEXT("value"), TEXT("IrisNormal"), TEXT("IrisNormal") },
+					{ TEXT("value"), TEXT("IrisPlaneNormal"), TEXT("IrisPlaneNormal") },
+					{ TEXT("value"), TEXT("IrisMask"), TEXT("IrisMask") },
+					{ TEXT("value"), TEXT("IrisDistance"), TEXT("IrisDistance") },
+					{ TEXT("value"), TEXT("EmissiveColor"), TEXT("EmissiveColor") }
+				} },
+				{ TEXT("SingleLayerWater"), TEXT("MaterialExpressionSubstrateSingleLayerWaterBSDF"), TEXT("Creates a Substrate single-layer water BSDF."), TEXT("Substrate.SingleLayerWater(BaseColor=Color, Roughness=0.05)"), true, {
+					{ TEXT("value"), TEXT("BaseColor"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Metallic"), TEXT("0.0") },
+					{ TEXT("value"), TEXT("Specular"), TEXT("0.5") },
+					{ TEXT("value"), TEXT("Roughness"), TEXT("0.05") },
+					{ TEXT("value"), TEXT("Normal"), TEXT("Normal") },
+					{ TEXT("value"), TEXT("EmissiveColor"), TEXT("EmissiveColor") },
+					{ TEXT("value"), TEXT("TopMaterialOpacity"), TEXT("1.0") },
+					{ TEXT("value"), TEXT("WaterAlbedo"), TEXT("WaterAlbedo") },
+					{ TEXT("value"), TEXT("WaterExtinction"), TEXT("WaterExtinction") },
+					{ TEXT("value"), TEXT("WaterPhaseG"), TEXT("WaterPhaseG") },
+					{ TEXT("value"), TEXT("ColorScaleBehindWater"), TEXT("ColorScaleBehindWater") }
+				} },
+				{ TEXT("LightFunction"), TEXT("MaterialExpressionSubstrateLightFunction"), TEXT("Creates a Substrate light function material."), TEXT("Substrate.LightFunction(Color=Color)"), true, {
+					{ TEXT("value"), TEXT("Color"), TEXT("Color") }
+				} },
+				{ TEXT("PostProcess"), TEXT("MaterialExpressionSubstratePostProcess"), TEXT("Creates a Substrate post-process material."), TEXT("Substrate.PostProcess(Color=Color, Opacity=1.0)"), true, {
+					{ TEXT("value"), TEXT("Color"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Opacity"), TEXT("1.0") }
+				} },
+				{ TEXT("UI"), TEXT("MaterialExpressionSubstrateUI"), TEXT("Creates a Substrate UI material."), TEXT("Substrate.UI(Color=Color, Opacity=1.0)"), true, {
+					{ TEXT("value"), TEXT("Color"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Opacity"), TEXT("1.0") }
+				} },
+				{ TEXT("ConvertMaterialAttributes"), TEXT("MaterialExpressionSubstrateConvertMaterialAttributes"), TEXT("Converts MaterialAttributes to a Substrate material."), TEXT("Substrate.ConvertMaterialAttributes(MaterialAttributes=Attrs)"), true, {
+					{ TEXT("MaterialAttributes"), TEXT("MaterialAttributes"), TEXT("Attrs") },
+					{ TEXT("value"), TEXT("WaterScatteringCoefficients"), TEXT("WaterScatteringCoefficients") },
+					{ TEXT("value"), TEXT("WaterAbsorptionCoefficients"), TEXT("WaterAbsorptionCoefficients") },
+					{ TEXT("value"), TEXT("WaterPhaseG"), TEXT("WaterPhaseG") },
+					{ TEXT("value"), TEXT("ColorScaleBehindWater"), TEXT("ColorScaleBehindWater") }
+				} },
+				{ TEXT("ConvertToDecal"), TEXT("MaterialExpressionSubstrateConvertToDecal"), TEXT("Converts a Substrate material to decal output."), TEXT("Substrate.ConvertToDecal(DecalMaterial=Surface, Coverage=1.0)"), true, {
+					{ TEXT("Substrate"), TEXT("DecalMaterial"), TEXT("Surface") },
+					{ TEXT("value"), TEXT("Coverage"), TEXT("1.0") }
+				} },
+				{ TEXT("HorizontalMix"), TEXT("MaterialExpressionSubstrateHorizontalMixing"), TEXT("Horizontally mixes two Substrate materials."), TEXT("Substrate.HorizontalMix(Background=Background, Foreground=Foreground, Mix=Mix)"), true, {
+					{ TEXT("Substrate"), TEXT("Background"), TEXT("Background") },
+					{ TEXT("Substrate"), TEXT("Foreground"), TEXT("Foreground") },
+					{ TEXT("value"), TEXT("Mix"), TEXT("Mix") }
+				} },
+				{ TEXT("HorizontalMixing"), TEXT("MaterialExpressionSubstrateHorizontalMixing"), TEXT("Alias of Substrate.HorizontalMix."), TEXT("Substrate.HorizontalMixing(Background=Background, Foreground=Foreground, Mix=Mix)"), true, {
+					{ TEXT("Substrate"), TEXT("Background"), TEXT("Background") },
+					{ TEXT("Substrate"), TEXT("Foreground"), TEXT("Foreground") },
+					{ TEXT("value"), TEXT("Mix"), TEXT("Mix") }
+				} },
+				{ TEXT("VerticalLayer"), TEXT("MaterialExpressionSubstrateVerticalLayering"), TEXT("Layers one Substrate material over another."), TEXT("Substrate.VerticalLayer(Top=TopLayer, Base=BaseLayer, Thickness=0.01)"), true, {
+					{ TEXT("Substrate"), TEXT("Top"), TEXT("Top") },
+					{ TEXT("Substrate"), TEXT("Base"), TEXT("Base") },
+					{ TEXT("value"), TEXT("Thickness"), TEXT("0.01") }
+				} },
+				{ TEXT("VerticalLayering"), TEXT("MaterialExpressionSubstrateVerticalLayering"), TEXT("Alias of Substrate.VerticalLayer."), TEXT("Substrate.VerticalLayering(Top=TopLayer, Base=BaseLayer, Thickness=0.01)"), true, {
+					{ TEXT("Substrate"), TEXT("Top"), TEXT("Top") },
+					{ TEXT("Substrate"), TEXT("Base"), TEXT("Base") },
+					{ TEXT("value"), TEXT("Thickness"), TEXT("0.01") }
+				} },
+				{ TEXT("Add"), TEXT("MaterialExpressionSubstrateAdd"), TEXT("Adds two Substrate materials."), TEXT("Substrate.Add(A=A, B=B)"), true, {
+					{ TEXT("Substrate"), TEXT("A"), TEXT("A") },
+					{ TEXT("Substrate"), TEXT("B"), TEXT("B") }
+				} },
+				{ TEXT("Weight"), TEXT("MaterialExpressionSubstrateWeight"), TEXT("Weights a Substrate material."), TEXT("Substrate.Weight(A=Surface, Weight=1.0)"), true, {
+					{ TEXT("Substrate"), TEXT("A"), TEXT("Surface") },
+					{ TEXT("value"), TEXT("Weight"), TEXT("1.0") }
+				} },
+				{ TEXT("Select"), TEXT("MaterialExpressionSubstrateSelect"), TEXT("Selects between Substrate materials."), TEXT("Substrate.Select(A=A, B=B, SelectValue=SelectValue)"), true, {
+					{ TEXT("Substrate"), TEXT("A"), TEXT("A") },
+					{ TEXT("Substrate"), TEXT("B"), TEXT("B") },
+					{ TEXT("value"), TEXT("SelectValue"), TEXT("SelectValue") }
+				} },
+				{ TEXT("TransmittanceToMFP"), TEXT("MaterialExpressionSubstrateTransmittanceToMFP"), TEXT("Converts transmittance to mean free path values."), TEXT("Substrate.TransmittanceToMFP(TransmittanceColor=Color, Thickness=1.0)"), false, {
+					{ TEXT("value"), TEXT("TransmittanceColor"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Thickness"), TEXT("1.0") }
+				} },
+				{ TEXT("MetalnessToDiffuseAlbedoF0"), TEXT("MaterialExpressionSubstrateMetalnessToDiffuseAlbedoF0"), TEXT("Converts metalness workflow values to diffuse albedo and F0."), TEXT("Substrate.MetalnessToDiffuseAlbedoF0(BaseColor=Color, Metallic=Metallic, Specular=0.5)"), false, {
+					{ TEXT("value"), TEXT("BaseColor"), TEXT("Color") },
+					{ TEXT("value"), TEXT("Metallic"), TEXT("Metallic") },
+					{ TEXT("value"), TEXT("Specular"), TEXT("0.5") }
+				} },
+				{ TEXT("HazinessToSecondaryRoughness"), TEXT("MaterialExpressionSubstrateHazinessToSecondaryRoughness"), TEXT("Converts haziness to secondary roughness."), TEXT("Substrate.HazinessToSecondaryRoughness(BaseRoughness=Roughness, Haziness=0.0)"), false, {
+					{ TEXT("value"), TEXT("BaseRoughness"), TEXT("Roughness") },
+					{ TEXT("value"), TEXT("Haziness"), TEXT("0.0") }
+				} },
+				{ TEXT("ThinFilm"), TEXT("MaterialExpressionSubstrateThinFilm"), TEXT("Creates Substrate thin-film interference helper output."), TEXT("Substrate.ThinFilm(Thickness=500.0, IOR=1.4)"), false, {
+					{ TEXT("value"), TEXT("Normal"), TEXT("Normal") },
+					{ TEXT("value"), TEXT("F0"), TEXT("F0") },
+					{ TEXT("value"), TEXT("F90"), TEXT("F90") },
+					{ TEXT("value"), TEXT("Thickness"), TEXT("500.0") },
+					{ TEXT("value"), TEXT("IOR"), TEXT("1.4") }
+				} }
+			};
+		}
+
 		int32 GetExpressionOutputComponentCount(const FExpressionOutput& Output)
 		{
 			const int32 MaskCount =
@@ -353,6 +540,58 @@ namespace UE::DreamShader::Editor::Private
 	FString FDreamShaderWorkspaceService::GetDreamShaderSettingsManifestFilePath()
 	{
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamShader/Bridge/settings.json"));
+	}
+
+	FString FDreamShaderWorkspaceService::GetSubstrateBuiltinsManifestFilePath()
+	{
+		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("DreamShader/Bridge/substrate-builtins.json"));
+	}
+
+	void FDreamShaderWorkspaceService::ExportSubstrateBuiltinsManifest()
+	{
+		const FString ManifestPath = GetSubstrateBuiltinsManifestFilePath();
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ManifestPath), true);
+
+		TArray<TSharedPtr<FJsonValue>> BuiltinValues;
+		for (const FSubstrateBuiltinManifestEntry& Builtin : BuildSubstrateBuiltinManifestEntries())
+		{
+			TSharedRef<FJsonObject> BuiltinObject = MakeShared<FJsonObject>();
+			BuiltinObject->SetStringField(TEXT("name"), Builtin.Name);
+			BuiltinObject->SetStringField(TEXT("qualifiedName"), FString::Printf(TEXT("Substrate.%s"), Builtin.Name));
+			BuiltinObject->SetStringField(TEXT("className"), Builtin.ClassName);
+			BuiltinObject->SetStringField(TEXT("outputType"), Builtin.bIsSubstrateOutput ? TEXT("Substrate") : TEXT("auto"));
+			BuiltinObject->SetBoolField(TEXT("isSubstrateOutput"), Builtin.bIsSubstrateOutput);
+			BuiltinObject->SetStringField(TEXT("detail"), Builtin.Detail);
+			BuiltinObject->SetStringField(TEXT("example"), Builtin.Example);
+			BuiltinObject->SetStringField(TEXT("snippet"), BuildSubstrateSnippet(Builtin));
+
+			TArray<TSharedPtr<FJsonValue>> ParameterValues;
+			for (const FSubstrateBuiltinParameterManifestEntry& Parameter : Builtin.Parameters)
+			{
+				AddParameterJson(ParameterValues, Parameter);
+			}
+			BuiltinObject->SetArrayField(TEXT("parameters"), ParameterValues);
+			BuiltinValues.Add(MakeShared<FJsonValueObject>(BuiltinObject));
+		}
+
+		TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
+		RootObject->SetStringField(TEXT("schema"), TEXT("DreamShader.SubstrateBuiltins"));
+		RootObject->SetNumberField(TEXT("version"), 1);
+		RootObject->SetStringField(TEXT("generatedAt"), FDateTime::UtcNow().ToIso8601());
+		RootObject->SetArrayField(TEXT("builtins"), BuiltinValues);
+
+		FString ManifestText;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ManifestText);
+		FJsonSerializer::Serialize(RootObject, Writer);
+
+		if (FFileHelper::SaveStringToFile(ManifestText, *ManifestPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			UE_LOG(LogDreamShader, Display, TEXT("Wrote DreamShader Substrate builtin manifest: %s"), *ManifestPath);
+		}
+		else
+		{
+			UE_LOG(LogDreamShader, Warning, TEXT("Failed to write DreamShader Substrate builtin manifest: %s"), *ManifestPath);
+		}
 	}
 
 	void FDreamShaderWorkspaceService::ExportDreamShaderSettingsManifest()
