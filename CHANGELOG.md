@@ -1,5 +1,12 @@
 # DreamShader ChangeLog
 
+## 1.4.0 - 2026-06-06
+
+### Compatibility
+
+- Added Unreal Engine `5.3` through `5.7` compatibility coverage.
+- Verified single-plugin `RunUAT BuildPlugin` builds for UE `5.3`, `5.4`, `5.5`, `5.6`, and `5.7` on Win64.
+
 ## 1.3.9 - 2026-05-29
 
 ### Maintenance

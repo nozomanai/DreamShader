@@ -12,8 +12,8 @@
         <code>UMaterial</code>, <code>UMaterialFunction</code>, Material Layer, and Material Layer Blend assets.
       </p>
       <p>
-        <img alt="Unreal Engine 5.7" src="https://img.shields.io/badge/Unreal%20Engine-5.7-313131" />
-        <img alt="Version 1.3.9" src="https://img.shields.io/badge/version-1.3.9-blue" />
+        <img alt="Unreal Engine 5.3-5.7" src="https://img.shields.io/badge/Unreal%20Engine-5.3--5.7-313131" />
+        <img alt="Version 1.4.0" src="https://img.shields.io/badge/version-1.4.0-blue" />
         <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green" />
       </p>
       <p>
@@ -45,7 +45,7 @@
 
 > [!TIP]
 >
-> DreamShader is actively developed against Unreal Engine `5.7`. Other Unreal versions have not been fully tested.
+> DreamShader is actively developed against Unreal Engine `5.7` and has been verified with single-plugin `BuildPlugin` builds on Unreal Engine `5.3`, `5.4`, `5.5`, `5.6`, and `5.7`.
 >
 > Keep all `.dsm`, `.dsf`, and `.dsh` source files in version control. The generated Unreal assets can always be rebuilt from source.
 >
@@ -102,6 +102,30 @@ MyProject/
 `- Plugins/
    `- DreamShader/
 ```
+
+## Compatibility
+
+DreamShader targets Unreal Engine 5 and is currently verified on Windows with single-plugin `RunUAT BuildPlugin` builds:
+
+| Unreal Engine | Status |
+| :------------ | :----- |
+| `5.7` | Verified |
+| `5.6` | Verified |
+| `5.5` | Verified |
+| `5.4` | Verified |
+| `5.3` | Verified |
+
+Use Unreal's plugin packaging command when you want to validate the plugin without building a full project target:
+
+```powershell
+& "<EngineDir>\Engine\Build\BatchFiles\RunUAT.bat" BuildPlugin `
+  -Plugin="<ProjectDir>\Plugins\DreamShader\DreamShader.uplugin" `
+  -Package="<OutputDir>\DreamShader" `
+  -TargetPlatforms=Win64 `
+  -Rocket
+```
+
+On Windows, UE `5.3` and `5.4` may require the MSVC `14.38` toolchain. Newer compiler toolchains can fail while compiling older engine headers before plugin code is reached.
 
 ## Minimal Material
 
@@ -385,8 +409,8 @@ Extension releases are available from [dreamshader-language-support](https://git
 The repository includes a GitHub Actions release workflow. Push a tag that matches `VersionName` in `DreamShader.uplugin`:
 
 ```powershell
-git tag v1.3.9
-git push origin v1.3.9
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
 The release archive is named `DreamShader-<Version>.zip` and contains the plugin source, resources, documentation, README, CHANGELOG, and LICENSE. It excludes `Binaries` and `Intermediate`. The release workflow also attaches the latest VSCode extension assets from `TypeDreamMoon/dreamshader-language-support`.
@@ -395,9 +419,9 @@ The release archive is named `DreamShader-<Version>.zip` and contains the plugin
 
 | Item | Value |
 | :--- | :---- |
-| Version | `1.3.9` |
+| Version | `1.4.0` |
 | Language | `DreamShaderLang` |
-| Unreal Engine | `5.7` |
+| Unreal Engine | `5.3` - `5.7` |
 | Author | TypeDreamMoon |
 | GitHub | <https://github.com/TypeDreamMoon> |
 | Docs | <https://lang.64hz.cn/> |
