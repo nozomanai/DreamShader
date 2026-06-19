@@ -111,6 +111,11 @@ namespace UE::DreamShader::Editor::Private
 		return FPaths::Combine(GetBridgeDirectory(), TEXT("diagnostics.json"));
 	}
 
+	FString FDreamShaderEditorBridge::GetDiagnosticsDirectory()
+	{
+		return FPaths::Combine(GetBridgeDirectory(), TEXT("diagnostics"));
+	}
+
 	FString FDreamShaderEditorBridge::GetSourceFileMetadata(UObject* Asset)
 	{
 		if (!Asset)
@@ -140,6 +145,7 @@ namespace UE::DreamShader::Editor::Private
 		IFileManager::Get().MakeDirectory(*GetBridgeDirectory(), true);
 		IFileManager::Get().MakeDirectory(*GetRequestDirectory(), true);
 		IFileManager::Get().MakeDirectory(*FDreamShaderPreviewRenderer::GetPreviewDirectory(), true);
+		FDreamShaderWorkspaceService::ResetBridgeDatabase();
 
 		FDreamShaderWorkspaceService::ExportMaterialExpressionManifest();
 		FDreamShaderWorkspaceService::ExportDreamShaderSettingsManifest();
@@ -177,6 +183,7 @@ namespace UE::DreamShader::Editor::Private
 	void FDreamShaderEditorBridge::Shutdown()
 	{
 		bIsShuttingDown = true;
+		FDreamShaderWorkspaceService::ResetBridgeDatabase();
 
 		if (TickerHandle.IsValid())
 		{
@@ -1402,6 +1409,8 @@ namespace UE::DreamShader::Editor::Private
 	void FDreamShaderEditorBridge::UpdateDiagnosticsFile() const
 	{
 		DiagnosticsStore.WriteToFile(GetDiagnosticsFilePath());
+		DiagnosticsStore.WriteToDirectory(GetDiagnosticsDirectory());
+		DiagnosticsStore.WriteToDatabase(FDreamShaderWorkspaceService::GetBridgeDatabaseFilePath());
 	}
 }
 

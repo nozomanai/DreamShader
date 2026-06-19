@@ -26,6 +26,7 @@ public class DreamShaderEditor : ModuleRules
 				"Renderer",
 				"Slate",
 				"SlateCore",
+				"SQLiteCore",
 				"ToolMenus",
 				"UnrealEd",
 				"WebSocketNetworking"

@@ -26,6 +26,7 @@ namespace UE::DreamShader::Editor::Private
 		static FString GetBridgeDirectory();
 		static FString GetRequestDirectory();
 		static FString GetDiagnosticsFilePath();
+		static FString GetDiagnosticsDirectory();
 		static FString GetSourceFileMetadata(UObject* Asset);
 
 		void QueueFullScan();

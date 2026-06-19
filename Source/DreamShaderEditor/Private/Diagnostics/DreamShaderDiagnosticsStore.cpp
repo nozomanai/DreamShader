@@ -4,7 +4,12 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
+#include "SQLiteDatabase.h"
+#include "SQLitePreparedStatement.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
@@ -45,6 +50,42 @@ namespace UE::DreamShader::Editor::Private
 			DiagnosticObject->SetStringField(TEXT("severity"), Diagnostic.Severity);
 			DiagnosticObject->SetStringField(TEXT("source"), Diagnostic.Source);
 			OutDiagnostics.Add(MakeShared<FJsonValueObject>(DiagnosticObject));
+		}
+
+		FString MakeStableFileKey(const FString& FilePath)
+		{
+			return FMD5::HashAnsiString(*UE::DreamShader::NormalizeSourceFilePath(FilePath));
+		}
+
+		TSharedRef<FJsonObject> BuildDiagnosticsFileObject(
+			const FString& FilePath,
+			const TArray<FDreamShaderDiagnosticRecord>& Diagnostics)
+		{
+			TSharedRef<FJsonObject> FileObject = MakeShared<FJsonObject>();
+			FileObject->SetStringField(TEXT("path"), FilePath);
+
+			TArray<TSharedPtr<FJsonValue>> DiagnosticValues;
+			for (const FDreamShaderDiagnosticRecord& Diagnostic : Diagnostics)
+			{
+				AddDiagnosticJson(DiagnosticValues, Diagnostic);
+			}
+
+			FileObject->SetArrayField(TEXT("diagnostics"), DiagnosticValues);
+			return FileObject;
+		}
+
+		bool SerializeJsonObject(const TSharedRef<FJsonObject>& Object, FString& OutText)
+		{
+			const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutText);
+			return FJsonSerializer::Serialize(Object, Writer);
+		}
+
+		bool BindAndExecute(FSQLitePreparedStatement& Statement)
+		{
+			const bool bResult = Statement.Execute();
+			Statement.Reset();
+			Statement.ClearBindings();
+			return bResult;
 		}
 
 		void RemoveDiagnosticsOwnedBySource(
@@ -115,17 +156,7 @@ namespace UE::DreamShader::Editor::Private
 		TArray<TSharedPtr<FJsonValue>> FileEntries;
 		for (const TPair<FString, TArray<FDreamShaderDiagnosticRecord>>& Pair : DiagnosticsByFile)
 		{
-			TSharedRef<FJsonObject> FileObject = MakeShared<FJsonObject>();
-			FileObject->SetStringField(TEXT("path"), Pair.Key);
-
-			TArray<TSharedPtr<FJsonValue>> DiagnosticValues;
-			for (const FDreamShaderDiagnosticRecord& Diagnostic : Pair.Value)
-			{
-				AddDiagnosticJson(DiagnosticValues, Diagnostic);
-			}
-
-			FileObject->SetArrayField(TEXT("diagnostics"), DiagnosticValues);
-			FileEntries.Add(MakeShared<FJsonValueObject>(FileObject));
+			FileEntries.Add(MakeShared<FJsonValueObject>(BuildDiagnosticsFileObject(Pair.Key, Pair.Value)));
 		}
 
 		RootObject->SetArrayField(TEXT("files"), FileEntries);
@@ -134,6 +165,103 @@ namespace UE::DreamShader::Editor::Private
 		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputText);
 		FJsonSerializer::Serialize(RootObject, Writer);
 		FFileHelper::SaveStringToFile(OutputText, *OutputFilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
+	void FDreamShaderDiagnosticsStore::WriteToDirectory(const FString& OutputDirectory) const
+	{
+		IFileManager::Get().MakeDirectory(*OutputDirectory, true);
+
+		TSet<FString> ActiveFileKeys;
+		TArray<TSharedPtr<FJsonValue>> FileIndexValues;
+		for (const TPair<FString, TArray<FDreamShaderDiagnosticRecord>>& Pair : DiagnosticsByFile)
+		{
+			const FString FileKey = MakeStableFileKey(Pair.Key);
+			ActiveFileKeys.Add(FileKey);
+
+			TSharedRef<FJsonObject> FileObject = BuildDiagnosticsFileObject(Pair.Key, Pair.Value);
+			FString FileText;
+			SerializeJsonObject(FileObject, FileText);
+			FFileHelper::SaveStringToFile(
+				FileText,
+				*FPaths::Combine(OutputDirectory, FileKey + TEXT(".json")),
+				FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+			TSharedRef<FJsonObject> IndexObject = MakeShared<FJsonObject>();
+			IndexObject->SetStringField(TEXT("path"), Pair.Key);
+			IndexObject->SetStringField(TEXT("file"), FileKey + TEXT(".json"));
+			IndexObject->SetNumberField(TEXT("count"), Pair.Value.Num());
+			FileIndexValues.Add(MakeShared<FJsonValueObject>(IndexObject));
+		}
+
+		TArray<FString> ExistingFiles;
+		IFileManager::Get().FindFiles(ExistingFiles, *FPaths::Combine(OutputDirectory, TEXT("*.json")), true, false);
+		for (const FString& ExistingFile : ExistingFiles)
+		{
+			const FString BaseName = FPaths::GetBaseFilename(ExistingFile);
+			if (!BaseName.Equals(TEXT("index"), ESearchCase::IgnoreCase) && !ActiveFileKeys.Contains(BaseName))
+			{
+				IFileManager::Get().Delete(*FPaths::Combine(OutputDirectory, ExistingFile), false, true, true);
+			}
+		}
+
+		TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
+		RootObject->SetNumberField(TEXT("version"), 1);
+		RootObject->SetStringField(TEXT("updatedAtUtc"), FDateTime::UtcNow().ToIso8601());
+		RootObject->SetArrayField(TEXT("files"), FileIndexValues);
+
+		FString IndexText;
+		SerializeJsonObject(RootObject, IndexText);
+		FFileHelper::SaveStringToFile(
+			IndexText,
+			*FPaths::Combine(OutputDirectory, TEXT("index.json")),
+			FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
+	void FDreamShaderDiagnosticsStore::WriteToDatabase(const FString& DatabaseFilePath) const
+	{
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(DatabaseFilePath), true);
+
+		FSQLiteDatabase Database;
+		if (!Database.Open(*DatabaseFilePath, ESQLiteDatabaseOpenMode::ReadWriteCreate))
+		{
+			UE_LOG(LogDreamShader, Warning, TEXT("Failed to open DreamShader bridge database for diagnostics: %s"), *DatabaseFilePath);
+			return;
+		}
+
+		Database.Execute(TEXT("PRAGMA journal_mode=WAL;"));
+		Database.Execute(TEXT("PRAGMA synchronous=NORMAL;"));
+		Database.Execute(TEXT("CREATE TABLE IF NOT EXISTS diagnostics(path TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at_utc TEXT NOT NULL);"));
+		Database.Execute(TEXT("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);"));
+		Database.Execute(TEXT("BEGIN TRANSACTION;"));
+		Database.Execute(TEXT("DELETE FROM diagnostics;"));
+
+		const FString UpdatedAtUtc = FDateTime::UtcNow().ToIso8601();
+		FSQLitePreparedStatement Statement(
+			Database,
+			TEXT("INSERT OR REPLACE INTO diagnostics(path, json, updated_at_utc) VALUES(?1, ?2, ?3);"));
+		if (Statement.IsValid())
+		{
+			for (const TPair<FString, TArray<FDreamShaderDiagnosticRecord>>& Pair : DiagnosticsByFile)
+			{
+				FString JsonText;
+				SerializeJsonObject(BuildDiagnosticsFileObject(Pair.Key, Pair.Value), JsonText);
+				Statement.SetBindingValueByIndex(1, Pair.Key);
+				Statement.SetBindingValueByIndex(2, JsonText);
+				Statement.SetBindingValueByIndex(3, UpdatedAtUtc);
+				BindAndExecute(Statement);
+			}
+		}
+
+		FSQLitePreparedStatement MetaStatement(
+			Database,
+			TEXT("INSERT OR REPLACE INTO meta(key, value) VALUES('diagnostics.updatedAt', ?1);"));
+		if (MetaStatement.IsValid())
+		{
+			MetaStatement.SetBindingValueByIndex(1, UpdatedAtUtc);
+			BindAndExecute(MetaStatement);
+		}
+
+		Database.Execute(TEXT("COMMIT;"));
 	}
 
 	bool FDreamShaderDiagnosticsStore::TryParseErrorLocation(

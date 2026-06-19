@@ -28,6 +28,11 @@ public:
 	bool TryResolveBlendMode(const FString& InName, EBlendMode& OutBlendMode) const;
 	bool TryResolveMaterialDomain(const FString& InName, EMaterialDomain& OutMaterialDomain) const;
 
+	static FString NormalizeMappingKey(const FString& InName);
+	static void BuildDefaultShadingModelMappings(TMap<FString, TEnumAsByte<EMaterialShadingModel>>& OutMappings);
+	static void BuildDefaultBlendModeMappings(TMap<FString, TEnumAsByte<EBlendMode>>& OutMappings);
+	static void BuildDefaultMaterialDomainMappings(TMap<FString, TEnumAsByte<EMaterialDomain>>& OutMappings);
+
 	UPROPERTY(Config, EditAnywhere, Category="Mappings")
 	TMap<FString, TEnumAsByte<EMaterialShadingModel>> ShadingModelMappings;
 
