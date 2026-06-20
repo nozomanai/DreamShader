@@ -48,6 +48,11 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="Paths", meta=(RelativeToGameDir))
 	FDirectoryPath GeneratedShaderDirectory;
 
+	UPROPERTY(Config, EditAnywhere, Category="Virtual Materials",
+		meta=(DisplayName="Enable Virtual Material Mode",
+			ToolTip="When enabled, DreamShader generates materials as transient in-memory assets at editor startup instead of saving .uasset files. DreamShader source files become the single asset source. Materials are automatically generated as persistent assets during cooking for packaging."))
+	bool bVirtualMaterialMode = false;
+
 	UPROPERTY(Config, EditAnywhere, Category="Compiler")
 	bool bAutoCompileOnSave = true;
 

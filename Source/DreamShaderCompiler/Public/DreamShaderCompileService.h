@@ -12,8 +12,8 @@ namespace UE::DreamShader::Compiler
 		{
 		}
 
-		FDreamShaderCompileResult CompileAssets(const FString& SourceFilePath, bool bForce = false);
-		FDreamShaderCompileResult CompileMaterial(const FString& SourceFilePath, bool bForce = false);
+		FDreamShaderCompileResult CompileAssets(const FString& SourceFilePath, bool bForce = false, bool bTransient = false);
+		FDreamShaderCompileResult CompileMaterial(const FString& SourceFilePath, bool bForce = false, bool bTransient = false);
 
 	private:
 		IDreamShaderCompiler& Compiler;

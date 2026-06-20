@@ -1523,6 +1523,7 @@ namespace UE::DreamShader::Editor
 			const FTextShaderDefinition& RootDefinition,
 			const FTextShaderMaterialFunctionDefinition& FunctionDefinition,
 			const bool bForce,
+			const bool bTransient,
 			FString& OutGeneratedAssetPath,
 			FString& OutError)
 		{
@@ -1554,7 +1555,7 @@ namespace UE::DreamShader::Editor
 			}
 
 			UMaterialFunction* MaterialFunction = nullptr;
-			if (!Private::CreateOrReuseMaterialFunction(FunctionDefinition, MaterialFunction, OutError) || !MaterialFunction)
+			if (!Private::CreateOrReuseMaterialFunction(FunctionDefinition, MaterialFunction, OutError, bTransient) || !MaterialFunction)
 			{
 				return false;
 			}
@@ -2063,15 +2064,23 @@ namespace UE::DreamShader::Editor
 			FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Updating '%s'..."), *FunctionDefinition.Name)));
 			UMaterialEditingLibrary::UpdateMaterialFunction(MaterialFunction, nullptr);
 			MaterialFunction->PostEditChange();
-			MaterialFunction->MarkPackageDirty();
-			Private::ApplySourceMetadata(MaterialFunction, SourceFilePath, SourceHash);
 
-			FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Saving '%s'..."), *FunctionDefinition.Name)));
-			FString SaveError;
-			if (!Private::SaveAssetPackage(MaterialFunction, SaveError))
+			if (bTransient)
 			{
-				OutError = SaveError;
-				return false;
+				FunctionSlowTask.EnterProgressFrame(1.0f);
+			}
+			else
+			{
+				MaterialFunction->MarkPackageDirty();
+				Private::ApplySourceMetadata(MaterialFunction, SourceFilePath, SourceHash);
+
+				FunctionSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Saving '%s'..."), *FunctionDefinition.Name)));
+				FString SaveError;
+				if (!Private::SaveAssetPackage(MaterialFunction, SaveError))
+				{
+					OutError = SaveError;
+					return false;
+				}
 			}
 
 			OutGeneratedAssetPath = MaterialFunction->GetPathName();
@@ -2079,7 +2088,7 @@ namespace UE::DreamShader::Editor
 		}
 	}
 
-	bool FMaterialGenerator::GenerateAssetsFromFile(const FString& InSourceFilePath, FString& OutMessage, const bool bForce)
+	bool FMaterialGenerator::GenerateAssetsFromFile(const FString& InSourceFilePath, FString& OutMessage, const bool bForce, const bool bTransient)
 	{
 		const FString SourceFilePath = UE::DreamShader::NormalizeSourceFilePath(InSourceFilePath);
 		FScopedSlowTask SourceSlowTask(
@@ -2144,7 +2153,7 @@ namespace UE::DreamShader::Editor
 		{
 			FString GeneratedAssetPath;
 			FString FunctionError;
-			if (!GenerateMaterialFunctionAsset(SourceFilePath, SourceText, SourceHash, Definition, FunctionDefinition, bForce, GeneratedAssetPath, FunctionError))
+			if (!GenerateMaterialFunctionAsset(SourceFilePath, SourceText, SourceHash, Definition, FunctionDefinition, bForce, bTransient, GeneratedAssetPath, FunctionError))
 			{
 				OutMessage = FormatGenerateError(SourceFilePath, FunctionError);
 				return false;
@@ -2161,7 +2170,7 @@ namespace UE::DreamShader::Editor
 		{
 			FString MaterialMessage;
 			SourceSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Generating DreamShader material '%s'..."), *Definition.Name)));
-			if (!GenerateMaterialFromFile(SourceFilePath, MaterialMessage, bForce))
+			if (!GenerateMaterialFromFile(SourceFilePath, MaterialMessage, bForce, bTransient))
 			{
 				OutMessage = MaterialMessage;
 				return false;
@@ -2207,7 +2216,7 @@ namespace UE::DreamShader::Editor
 		return true;
 	}
 
-	bool FMaterialGenerator::GenerateMaterialFromFile(const FString& InSourceFilePath, FString& OutMessage, const bool bForce)
+	bool FMaterialGenerator::GenerateMaterialFromFile(const FString& InSourceFilePath, FString& OutMessage, const bool bForce, const bool bTransient)
 	{
 		const FString SourceFilePath = UE::DreamShader::NormalizeSourceFilePath(InSourceFilePath);
 		FScopedSlowTask MaterialSlowTask(
@@ -2305,7 +2314,7 @@ namespace UE::DreamShader::Editor
 		UMaterial* Material = nullptr;
 		FString MaterialError;
 		MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Preparing material asset '%s'..."), *Definition.Name)));
-		if (!Private::CreateOrReuseMaterial(Definition, Material, MaterialError) || !Material)
+		if (!Private::CreateOrReuseMaterial(Definition, Material, MaterialError, bTransient) || !Material)
 		{
 			OutMessage = FString::Printf(TEXT("%s: %s"), *SourceFilePath, *MaterialError);
 			return false;
@@ -2772,18 +2781,26 @@ namespace UE::DreamShader::Editor
 		MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Compiling material '%s'..."), *Material->GetName())));
 		UMaterialEditingLibrary::RecompileMaterial(Material);
 		Material->PostEditChange();
-		Material->MarkPackageDirty();
-		Private::ApplySourceMetadata(Material, SourceFilePath, SourceHash);
 
-		MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Saving material '%s'..."), *Material->GetName())));
-		FString SaveError;
-		if (!Private::SaveAssetPackage(Material, SaveError))
+		if (bTransient)
 		{
-			OutMessage = FString::Printf(TEXT("%s: %s"), *SourceFilePath, *SaveError);
-			return false;
+			MaterialSlowTask.EnterProgressFrame(1.0f);
+		}
+		else
+		{
+			Material->MarkPackageDirty();
+			Private::ApplySourceMetadata(Material, SourceFilePath, SourceHash);
+
+			MaterialSlowTask.EnterProgressFrame(1.0f, FText::FromString(FString::Printf(TEXT("Saving material '%s'..."), *Material->GetName())));
+			FString SaveError;
+			if (!Private::SaveAssetPackage(Material, SaveError))
+			{
+				OutMessage = FString::Printf(TEXT("%s: %s"), *SourceFilePath, *SaveError);
+				return false;
+			}
 		}
 
-		OutMessage = FString::Printf(TEXT("Generated %s from %s."), *Material->GetPathName(), *SourceFilePath);
+		OutMessage = FString::Printf(TEXT("Generated %s from %s.%s"), *Material->GetPathName(), *SourceFilePath, bTransient ? TEXT(" (virtual)") : TEXT(""));
 		return true;
 	}
 }

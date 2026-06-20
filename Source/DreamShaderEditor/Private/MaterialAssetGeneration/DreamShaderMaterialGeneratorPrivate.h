@@ -228,8 +228,8 @@ namespace UE::DreamShader::Editor::Private
 		bool& bOutIsTexture,
 		ETextShaderTextureType& OutTextureType,
 		bool& bOutIsSubstrateMaterial);
-	bool CreateOrReuseMaterial(const FTextShaderDefinition& Definition, UMaterial*& OutMaterial, FString& OutError);
-	bool CreateOrReuseMaterialFunction(const FTextShaderMaterialFunctionDefinition& Definition, UMaterialFunction*& OutFunction, FString& OutError);
+	bool CreateOrReuseMaterial(const FTextShaderDefinition& Definition, UMaterial*& OutMaterial, FString& OutError, bool bTransient = false);
+	bool CreateOrReuseMaterialFunction(const FTextShaderMaterialFunctionDefinition& Definition, UMaterialFunction*& OutFunction, FString& OutError, bool bTransient = false);
 	bool TryResolveMaterialFunctionParameterType(
 		const FString& InTypeName,
 		int32& OutComponentCount,

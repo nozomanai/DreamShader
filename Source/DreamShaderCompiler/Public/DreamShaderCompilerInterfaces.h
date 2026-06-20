@@ -12,6 +12,7 @@ namespace UE::DreamShader::Compiler
 	{
 		FString SourceFilePath;
 		bool bForce = false;
+		bool bTransient = false;
 	};
 
 	struct DREAMSHADERCOMPILER_API FDreamShaderCompileResult

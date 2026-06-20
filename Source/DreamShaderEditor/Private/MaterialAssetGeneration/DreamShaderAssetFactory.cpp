@@ -291,7 +291,7 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
-	bool CreateOrReuseMaterial(const FTextShaderDefinition& Definition, UMaterial*& OutMaterial, FString& OutError)
+	bool CreateOrReuseMaterial(const FTextShaderDefinition& Definition, UMaterial*& OutMaterial, FString& OutError, const bool bTransient)
 	{
 		FString PackageName;
 		FString ObjectPath;
@@ -320,14 +320,22 @@ namespace UE::DreamShader::Editor::Private
 			return false;
 		}
 
-		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-		OutMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
-			UMaterial::StaticClass(),
-			MaterialPackage,
-			FName(*AssetName),
-			RF_Public | RF_Standalone,
-			nullptr,
-			GWarn));
+		if (bTransient)
+		{
+			MaterialPackage->SetPackageFlags(PKG_NewlyCreated);
+			OutMaterial = NewObject<UMaterial>(MaterialPackage, FName(*AssetName), RF_Public | RF_Standalone | RF_Transient);
+		}
+		else
+		{
+			UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
+			OutMaterial = Cast<UMaterial>(Factory->FactoryCreateNew(
+				UMaterial::StaticClass(),
+				MaterialPackage,
+				FName(*AssetName),
+				RF_Public | RF_Standalone,
+				nullptr,
+				GWarn));
+		}
 
 		if (!OutMaterial)
 		{
@@ -339,7 +347,7 @@ namespace UE::DreamShader::Editor::Private
 		return true;
 	}
 
-	bool CreateOrReuseMaterialFunction(const FTextShaderMaterialFunctionDefinition& Definition, UMaterialFunction*& OutFunction, FString& OutError)
+	bool CreateOrReuseMaterialFunction(const FTextShaderMaterialFunctionDefinition& Definition, UMaterialFunction*& OutFunction, FString& OutError, const bool bTransient)
 	{
 		FString PackageName;
 		FString ObjectPath;
@@ -393,11 +401,20 @@ namespace UE::DreamShader::Editor::Private
 			return false;
 		}
 
+		const EObjectFlags ObjectFlags = bTransient
+			? (RF_Public | RF_Standalone | RF_Transient)
+			: (RF_Public | RF_Standalone);
+
+		if (bTransient)
+		{
+			FunctionPackage->SetPackageFlags(PKG_NewlyCreated);
+		}
+
 		OutFunction = Cast<UMaterialFunction>(NewObject<UObject>(
 			FunctionPackage,
 			ExpectedClass,
 			FName(*AssetName),
-			RF_Public | RF_Standalone));
+			ObjectFlags));
 
 		if (!OutFunction)
 		{

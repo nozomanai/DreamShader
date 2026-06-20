@@ -2,6 +2,7 @@
 
 #include "Bridge/DreamShaderPreviewWebSocketServer.h"
 #include "DreamShaderCompileService.h"
+#include "MaterialAssetGeneration/DreamShaderMaterialGenerator.h"
 #include "Decompiler/DreamShaderDecompileService.h"
 #include "Decompiler/DreamShaderGraphDecompiler.h"
 #include "Compile/DreamShaderEditorCompileAdapter.h"
@@ -142,6 +143,9 @@ namespace UE::DreamShader::Editor::Private
 	{
 		bIsShuttingDown = false;
 
+		const UDreamShaderSettings* Settings = GetDefault<UDreamShaderSettings>();
+		bVirtualMaterialMode = Settings && Settings->bVirtualMaterialMode;
+
 		IFileManager::Get().MakeDirectory(*GetBridgeDirectory(), true);
 		IFileManager::Get().MakeDirectory(*GetRequestDirectory(), true);
 		IFileManager::Get().MakeDirectory(*FDreamShaderPreviewRenderer::GetPreviewDirectory(), true);
@@ -151,6 +155,12 @@ namespace UE::DreamShader::Editor::Private
 		FDreamShaderWorkspaceService::ExportDreamShaderSettingsManifest();
 		FDreamShaderWorkspaceService::ExportSubstrateBuiltinsManifest();
 		SyncVirtualFunctionDefinitions();
+
+		if (bVirtualMaterialMode)
+		{
+			GenerateAllVirtualMaterials();
+		}
+
 		QueueFullScan();
 		UpdateDiagnosticsFile();
 
@@ -243,6 +253,45 @@ namespace UE::DreamShader::Editor::Private
 		{
 			PendingFiles.Add(UE::DreamShader::NormalizeSourceFilePath(SourceFile), Now);
 		}
+	}
+
+	void FDreamShaderEditorBridge::GenerateAllVirtualMaterials()
+	{
+		TArray<FString> SourceFiles;
+		FDreamShaderSourceFileUtils::FindProjectDreamShaderSourceFiles(SourceFiles);
+
+		if (SourceFiles.IsEmpty())
+		{
+			return;
+		}
+
+		UE_LOG(LogDreamShader, Display, TEXT("DreamShader virtual material mode: generating %d source file(s) in memory..."), SourceFiles.Num());
+
+		int32 SuccessCount = 0;
+		int32 FailCount = 0;
+		for (const FString& SourceFile : SourceFiles)
+		{
+			const FString NormalizedPath = UE::DreamShader::NormalizeSourceFilePath(SourceFile);
+			if (UE::DreamShader::IsDreamShaderHeaderFile(NormalizedPath))
+			{
+				continue;
+			}
+
+			FString Message;
+			const bool bSuccess = FMaterialGenerator::GenerateAssetsFromFile(NormalizedPath, Message, true, true);
+			if (bSuccess)
+			{
+				++SuccessCount;
+				UE_LOG(LogDreamShader, Display, TEXT("  [Virtual] %s"), *Message);
+			}
+			else
+			{
+				++FailCount;
+				UE_LOG(LogDreamShader, Warning, TEXT("  [Virtual] Failed: %s"), *Message);
+			}
+		}
+
+		UE_LOG(LogDreamShader, Display, TEXT("DreamShader virtual material generation complete: %d succeeded, %d failed."), SuccessCount, FailCount);
 	}
 
 	void FDreamShaderEditorBridge::QueueSourceFile(const FString& SourceFilePath)
@@ -479,7 +528,7 @@ namespace UE::DreamShader::Editor::Private
 	void FDreamShaderEditorBridge::ProcessSourceFile(const FString& SourceFilePath)
 	{
 		UE::DreamShader::Compiler::FDreamShaderCompileService CompileService(UE::DreamShader::Editor::GetEditorCompileAdapter());
-		const UE::DreamShader::Compiler::FDreamShaderCompileResult Result = CompileService.CompileAssets(SourceFilePath);
+		const UE::DreamShader::Compiler::FDreamShaderCompileResult Result = CompileService.CompileAssets(SourceFilePath, false, bVirtualMaterialMode);
 		if (Result.bSucceeded)
 		{
 			ClearDiagnosticsForSourceAndDependencies(SourceFilePath);
