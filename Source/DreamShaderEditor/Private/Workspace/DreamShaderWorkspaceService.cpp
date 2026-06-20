@@ -488,25 +488,28 @@ namespace UE::DreamShader::Editor::Private
 
 			Database.Execute(TEXT("BEGIN TRANSACTION;"));
 			Database.Execute(TEXT("DELETE FROM settings_mappings;"));
-			FSQLitePreparedStatement Statement(
-				Database,
-				TEXT("INSERT OR REPLACE INTO settings_mappings(kind, alias, normalized_alias, value, name, display_name, source) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);"));
-			if (Statement.IsValid())
 			{
-				for (const FDreamShaderBridgeMappingEntry& Entry : Entries)
+				FSQLitePreparedStatement Statement(
+					Database,
+					TEXT("INSERT OR REPLACE INTO settings_mappings(kind, alias, normalized_alias, value, name, display_name, source) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);"));
+				if (Statement.IsValid())
 				{
-					Statement.SetBindingValueByIndex(1, Entry.Kind);
-					Statement.SetBindingValueByIndex(2, Entry.Alias);
-					Statement.SetBindingValueByIndex(3, UDreamShaderSettings::NormalizeMappingKey(Entry.Alias));
-					Statement.SetBindingValueByIndex(4, Entry.Value);
-					Statement.SetBindingValueByIndex(5, Entry.Name);
-					Statement.SetBindingValueByIndex(6, Entry.DisplayName);
-					Statement.SetBindingValueByIndex(7, Entry.Source);
-					BindAndExecute(Statement);
+					for (const FDreamShaderBridgeMappingEntry& Entry : Entries)
+					{
+						Statement.SetBindingValueByIndex(1, Entry.Kind);
+						Statement.SetBindingValueByIndex(2, Entry.Alias);
+						Statement.SetBindingValueByIndex(3, UDreamShaderSettings::NormalizeMappingKey(Entry.Alias));
+						Statement.SetBindingValueByIndex(4, Entry.Value);
+						Statement.SetBindingValueByIndex(5, Entry.Name);
+						Statement.SetBindingValueByIndex(6, Entry.DisplayName);
+						Statement.SetBindingValueByIndex(7, Entry.Source);
+						BindAndExecute(Statement);
+					}
 				}
 			}
 			SetBridgeDatabaseMeta(Database, TEXT("settings.generatedAt"), FDateTime::UtcNow().ToIso8601());
 			Database.Execute(TEXT("COMMIT;"));
+			Database.Close();
 		}
 
 		void WriteMaterialExpressionsToBridgeDatabase(
@@ -520,23 +523,26 @@ namespace UE::DreamShader::Editor::Private
 
 			Database.Execute(TEXT("BEGIN TRANSACTION;"));
 			Database.Execute(TEXT("DELETE FROM material_expressions;"));
-			FSQLitePreparedStatement Statement(
-				Database,
-				TEXT("INSERT OR REPLACE INTO material_expressions(name, class_name, path_name, default_output_type, json) VALUES(?1, ?2, ?3, ?4, ?5);"));
-			if (Statement.IsValid())
 			{
-				for (const FDreamShaderBridgeMaterialExpressionEntry& Entry : Entries)
+				FSQLitePreparedStatement Statement(
+					Database,
+					TEXT("INSERT OR REPLACE INTO material_expressions(name, class_name, path_name, default_output_type, json) VALUES(?1, ?2, ?3, ?4, ?5);"));
+				if (Statement.IsValid())
 				{
-					Statement.SetBindingValueByIndex(1, Entry.Name);
-					Statement.SetBindingValueByIndex(2, Entry.ClassName);
-					Statement.SetBindingValueByIndex(3, Entry.PathName);
-					Statement.SetBindingValueByIndex(4, Entry.DefaultOutputType);
-					Statement.SetBindingValueByIndex(5, Entry.JsonText);
-					BindAndExecute(Statement);
+					for (const FDreamShaderBridgeMaterialExpressionEntry& Entry : Entries)
+					{
+						Statement.SetBindingValueByIndex(1, Entry.Name);
+						Statement.SetBindingValueByIndex(2, Entry.ClassName);
+						Statement.SetBindingValueByIndex(3, Entry.PathName);
+						Statement.SetBindingValueByIndex(4, Entry.DefaultOutputType);
+						Statement.SetBindingValueByIndex(5, Entry.JsonText);
+						BindAndExecute(Statement);
+					}
 				}
 			}
 			SetBridgeDatabaseMeta(Database, TEXT("materialExpressions.generatedAt"), FDateTime::UtcNow().ToIso8601());
 			Database.Execute(TEXT("COMMIT;"));
+			Database.Close();
 		}
 
 		void WriteSubstrateBuiltinsToBridgeDatabase(const TArray<FDreamShaderBridgeSubstrateBuiltinEntry>& Entries)
@@ -549,27 +555,30 @@ namespace UE::DreamShader::Editor::Private
 
 			Database.Execute(TEXT("BEGIN TRANSACTION;"));
 			Database.Execute(TEXT("DELETE FROM substrate_builtins;"));
-			FSQLitePreparedStatement Statement(
-				Database,
-				TEXT("INSERT OR REPLACE INTO substrate_builtins(name, qualified_name, class_name, output_type, is_substrate_output, detail, example, snippet, json) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);"));
-			if (Statement.IsValid())
 			{
-				for (const FDreamShaderBridgeSubstrateBuiltinEntry& Entry : Entries)
+				FSQLitePreparedStatement Statement(
+					Database,
+					TEXT("INSERT OR REPLACE INTO substrate_builtins(name, qualified_name, class_name, output_type, is_substrate_output, detail, example, snippet, json) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);"));
+				if (Statement.IsValid())
 				{
-					Statement.SetBindingValueByIndex(1, Entry.Name);
-					Statement.SetBindingValueByIndex(2, Entry.QualifiedName);
-					Statement.SetBindingValueByIndex(3, Entry.ClassName);
-					Statement.SetBindingValueByIndex(4, Entry.OutputType);
-					Statement.SetBindingValueByIndex(5, Entry.bIsSubstrateOutput ? 1 : 0);
-					Statement.SetBindingValueByIndex(6, Entry.Detail);
-					Statement.SetBindingValueByIndex(7, Entry.Example);
-					Statement.SetBindingValueByIndex(8, Entry.Snippet);
-					Statement.SetBindingValueByIndex(9, Entry.JsonText);
-					BindAndExecute(Statement);
+					for (const FDreamShaderBridgeSubstrateBuiltinEntry& Entry : Entries)
+					{
+						Statement.SetBindingValueByIndex(1, Entry.Name);
+						Statement.SetBindingValueByIndex(2, Entry.QualifiedName);
+						Statement.SetBindingValueByIndex(3, Entry.ClassName);
+						Statement.SetBindingValueByIndex(4, Entry.OutputType);
+						Statement.SetBindingValueByIndex(5, Entry.bIsSubstrateOutput ? 1 : 0);
+						Statement.SetBindingValueByIndex(6, Entry.Detail);
+						Statement.SetBindingValueByIndex(7, Entry.Example);
+						Statement.SetBindingValueByIndex(8, Entry.Snippet);
+						Statement.SetBindingValueByIndex(9, Entry.JsonText);
+						BindAndExecute(Statement);
+					}
 				}
 			}
 			SetBridgeDatabaseMeta(Database, TEXT("substrateBuiltins.generatedAt"), FDateTime::UtcNow().ToIso8601());
 			Database.Execute(TEXT("COMMIT;"));
+			Database.Close();
 		}
 
 		void AddExistingFileCandidate(TArray<FString>& OutCandidates, const FString& Candidate)

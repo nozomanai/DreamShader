@@ -236,32 +236,37 @@ namespace UE::DreamShader::Editor::Private
 		Database.Execute(TEXT("DELETE FROM diagnostics;"));
 
 		const FString UpdatedAtUtc = FDateTime::UtcNow().ToIso8601();
-		FSQLitePreparedStatement Statement(
-			Database,
-			TEXT("INSERT OR REPLACE INTO diagnostics(path, json, updated_at_utc) VALUES(?1, ?2, ?3);"));
-		if (Statement.IsValid())
 		{
-			for (const TPair<FString, TArray<FDreamShaderDiagnosticRecord>>& Pair : DiagnosticsByFile)
+			FSQLitePreparedStatement Statement(
+				Database,
+				TEXT("INSERT OR REPLACE INTO diagnostics(path, json, updated_at_utc) VALUES(?1, ?2, ?3);"));
+			if (Statement.IsValid())
 			{
-				FString JsonText;
-				SerializeJsonObject(BuildDiagnosticsFileObject(Pair.Key, Pair.Value), JsonText);
-				Statement.SetBindingValueByIndex(1, Pair.Key);
-				Statement.SetBindingValueByIndex(2, JsonText);
-				Statement.SetBindingValueByIndex(3, UpdatedAtUtc);
-				BindAndExecute(Statement);
+				for (const TPair<FString, TArray<FDreamShaderDiagnosticRecord>>& Pair : DiagnosticsByFile)
+				{
+					FString JsonText;
+					SerializeJsonObject(BuildDiagnosticsFileObject(Pair.Key, Pair.Value), JsonText);
+					Statement.SetBindingValueByIndex(1, Pair.Key);
+					Statement.SetBindingValueByIndex(2, JsonText);
+					Statement.SetBindingValueByIndex(3, UpdatedAtUtc);
+					BindAndExecute(Statement);
+				}
 			}
 		}
 
-		FSQLitePreparedStatement MetaStatement(
-			Database,
-			TEXT("INSERT OR REPLACE INTO meta(key, value) VALUES('diagnostics.updatedAt', ?1);"));
-		if (MetaStatement.IsValid())
 		{
-			MetaStatement.SetBindingValueByIndex(1, UpdatedAtUtc);
-			BindAndExecute(MetaStatement);
+			FSQLitePreparedStatement MetaStatement(
+				Database,
+				TEXT("INSERT OR REPLACE INTO meta(key, value) VALUES('diagnostics.updatedAt', ?1);"));
+			if (MetaStatement.IsValid())
+			{
+				MetaStatement.SetBindingValueByIndex(1, UpdatedAtUtc);
+				BindAndExecute(MetaStatement);
+			}
 		}
 
 		Database.Execute(TEXT("COMMIT;"));
+		Database.Close();
 	}
 
 	bool FDreamShaderDiagnosticsStore::TryParseErrorLocation(

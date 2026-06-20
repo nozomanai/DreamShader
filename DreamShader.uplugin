@@ -36,6 +36,10 @@
 		{
 			"Name": "WebSocketNetworking",
 			"Enabled": true
+		},
+		{
+			"Name": "SQLiteCore",
+			"Enabled": true
 		}
 	],
 	"IsExperimentalVersion": false
